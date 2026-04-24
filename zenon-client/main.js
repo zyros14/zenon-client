@@ -1817,6 +1817,15 @@ async function resolveCurseforgeSearchParams(kind) {
   if (k === 'mod') return { classId: CF_CLASS_ID_MODS };
   if (k === 'modpack') return { classId: CF_CLASS_ID_MODPACKS };
   if (k === 'resourcepack') return { classId: CF_CLASS_ID_RESOURCEPACKS };
+  if (k === 'shader' || k === 'shaderpack' || k === 'shaders') {
+    // CurseForge “Shaders” is a category under Mods.
+    const cats = await getCurseforgeCategoriesCached();
+    const shaderCat =
+      cats.find((c) => c && c.classId === CF_CLASS_ID_MODS && String(c.slug || '').toLowerCase() === 'shaders') ||
+      cats.find((c) => c && c.classId === CF_CLASS_ID_MODS && String(c.name || '').toLowerCase() === 'shaders') ||
+      cats.find((c) => c && c.classId === CF_CLASS_ID_MODS && String(c.name || '').toLowerCase().includes('shader'));
+    return { classId: CF_CLASS_ID_MODS, categoryId: shaderCat?.id || null };
+  }
   if (k === 'datapack') {
     // CurseForge “Data Packs” is a category under Resource Packs.
     const cats = await getCurseforgeCategoriesCached();
@@ -1858,9 +1867,41 @@ async function curseforgeRequest(pathname, settings, { query = null, method = 'G
     throw err;
   }
   const base = useProxy ? proxyBase.replace(/\/+$/, '') : 'https://api.curseforge.com/v1';
-  const u = new URL(`${base}${useProxy ? '/api' : ''}${pathname}`);
-  if (query && typeof query === 'object') {
-    for (const [k, v] of Object.entries(query)) {
+
+  let proxyPath = pathname;
+  let proxyQuery = (query && typeof query === 'object') ? { ...query } : null;
+  if (useProxy) {
+    // Our Vercel proxy exposes simplified endpoints:
+    // - /api/search
+    // - /api/files?modId=...
+    // - /api/file?modId=...&fileId=...
+    // - /api/download-url?modId=...&fileId=...
+    const p = String(pathname || '');
+    const mSearch = p === '/mods/search';
+    const mCats = p === '/categories';
+    const mFiles = p.match(/^\/mods\/(\d+)\/files$/);
+    const mFile = p.match(/^\/mods\/(\d+)\/files\/(\d+)$/);
+    const mDl = p.match(/^\/mods\/(\d+)\/files\/(\d+)\/download-url$/);
+
+    if (mCats) {
+      proxyPath = '/categories';
+    } else if (mSearch) {
+      proxyPath = '/search';
+    } else if (mDl) {
+      proxyPath = '/download-url';
+      proxyQuery = { ...(proxyQuery || {}), modId: mDl[1], fileId: mDl[2] };
+    } else if (mFile) {
+      proxyPath = '/file';
+      proxyQuery = { ...(proxyQuery || {}), modId: mFile[1], fileId: mFile[2] };
+    } else if (mFiles) {
+      proxyPath = '/files';
+      proxyQuery = { ...(proxyQuery || {}), modId: mFiles[1] };
+    }
+  }
+
+  const u = new URL(`${base}${useProxy ? '/api' : ''}${useProxy ? proxyPath : pathname}`);
+  if (proxyQuery && typeof proxyQuery === 'object') {
+    for (const [k, v] of Object.entries(proxyQuery)) {
       if (v == null || v === '') continue;
       u.searchParams.set(k, String(v));
     }
@@ -3613,7 +3654,15 @@ ipcMain.handle('curseforge:search-mods', async (_, params) => {
       index: p.index
     });
   } catch (e) {
-    return { hits: [], total_hits: 0, error: e?.message || String(e) };
+    let msg = '';
+    try {
+      if (e && typeof e === 'object' && typeof e.message === 'string') msg = e.message;
+      else if (typeof e === 'string') msg = e;
+      else msg = JSON.stringify(e);
+    } catch (_e2) {
+      msg = String(e);
+    }
+    return { hits: [], total_hits: 0, error: msg || 'Search failed' };
   }
 });
 ipcMain.handle('curseforge:get-files', async (_, params) => {

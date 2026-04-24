@@ -5,7 +5,13 @@ let discoverySearchTimer = null;
 let discoveryQuery = '';
 let discoveryTypeId = 'mod';
 let discoveryOffset = 0;
-// CurseForge removed
+let discoveryProvider = 'all'; // 'all' | 'modrinth' | 'curseforge'
+
+const DISCOVERY_PROVIDERS = [
+  { id: 'all', label: 'All' },
+  { id: 'modrinth', label: 'Modrinth' },
+  { id: 'curseforge', label: 'CurseForge' }
+];
 
 const DISCOVERY_TYPES = [
   {
@@ -55,7 +61,6 @@ function discoveryCompatibleInstances(type, instances) {
 
 async function openDiscoveryInstallTargetModal(projectId, title, iconUrl = '', author = '') {
   const type = currentDiscoveryType();
-  if (type.id === 'modpack') return;
 
   State.instances = await window.zenon.getInstances();
   if (typeof window.syncSelectedInstanceWithList === 'function') window.syncSelectedInstanceWithList();
@@ -106,11 +111,24 @@ async function openDiscoveryInstallTargetModal(projectId, title, iconUrl = '', a
         closeModal('modal-discovery-target');
         if (!sel) return;
         const vo = type.versionOpts(sel);
-        zenonOpenInstallModal(projectId, title, type.kind, vo, {
-          targetInstance: sel,
-          iconUrl: iconUrl || '',
-          author: author || ''
-        });
+        if (String(projectId || '').startsWith('cf:')) {
+          // Uses the shared modal defined in library.js
+          const projectType =
+            type.id === 'modpack'
+              ? 'modpack'
+              : type.id === 'resourcepack'
+                ? 'resourcepack'
+                : type.id === 'datapack'
+                  ? 'datapack'
+                  : 'mod';
+          zenonOpenCurseforgeInstallModal(projectId, title, sel, projectType, { iconUrl: iconUrl || '', author: author || '' });
+        } else {
+          zenonOpenInstallModal(projectId, title, type.kind, vo, {
+            targetInstance: sel,
+            iconUrl: iconUrl || '',
+            author: author || ''
+          });
+        }
       });
     });
     document.getElementById('discovery-target-cancel')?.addEventListener('click', () => closeModal('modal-discovery-target'));
@@ -145,9 +163,17 @@ async function renderDiscovery() {
       <div class="discovery-head glow-hero">
         <div>
           <h1 class="page-title discovery-title">Discovery</h1>
-          <p class="page-subtitle discovery-sub">Search Modrinth for mods, modpacks, shaders, resource packs, and data packs.</p>
+          <p class="page-subtitle discovery-sub">Search Modrinth + CurseForge for mods, modpacks, resource packs, and data packs.</p>
           <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance (or a modpack creates a new one).</p>
         </div>
+      </div>
+
+      <div class="discovery-type-row" id="discovery-provider-row">
+        ${DISCOVERY_PROVIDERS.map(
+          (p) => `
+          <button type="button" class="id-pill ${p.id === discoveryProvider ? 'active' : ''}" data-provider="${p.id}">${p.label}</button>
+        `
+        ).join('')}
       </div>
 
       <div class="discovery-type-row" id="discovery-type-row">
@@ -160,7 +186,7 @@ async function renderDiscovery() {
 
       <div class="search-bar discovery-search">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input type="text" id="discovery-search-input" placeholder="Search ${type.label.toLowerCase()}…" value="${escapeHtml(discoveryQuery)}" />
+        <input type="text" id="discovery-search-input" placeholder="Search ${discoveryProvider === 'curseforge' ? 'CurseForge' : discoveryProvider === 'modrinth' ? 'Modrinth' : 'Modrinth + CurseForge'}…" value="${escapeHtml(discoveryQuery)}" />
       </div>
 
       <div class="discovery-filters">
@@ -188,6 +214,15 @@ async function renderDiscovery() {
     const btn = e.target.closest('[data-type]');
     if (!btn) return;
     discoveryTypeId = btn.dataset.type;
+    discoveryOffset = 0;
+    await renderDiscovery();
+    await runDiscoverySearch(0);
+  });
+
+  document.getElementById('discovery-provider-row')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-provider]');
+    if (!btn) return;
+    discoveryProvider = btn.dataset.provider;
     discoveryOffset = 0;
     await renderDiscovery();
     await runDiscoverySearch(0);
@@ -263,16 +298,93 @@ async function runDiscoverySearch(offset) {
   resultsEl.innerHTML = '<div class="loading-spinner"></div>';
   if (pagerEl) pagerEl.style.display = 'none';
 
+  const errToText = (x) => {
+    try {
+      if (!x) return '';
+      if (typeof x === 'string') return x;
+      if (x && typeof x.message === 'string') return x.message;
+      return JSON.stringify(x);
+    } catch (e) {
+      return String(x);
+    }
+  };
+
   let data;
   try {
-    data = await window.zenon.searchModrinth({
-      query: discoveryQuery,
-      version,
-      loader,
-      projectType: type.projectType,
-      limit: DISCOVERY_PAGE_SIZE,
-      offset: discoveryOffset
-    });
+    if (discoveryProvider === 'modrinth') {
+      data = await window.zenon.searchModrinth({
+        query: discoveryQuery,
+        version,
+        loader,
+        projectType: type.projectType,
+        limit: DISCOVERY_PAGE_SIZE,
+        offset: discoveryOffset
+      });
+    } else if (discoveryProvider === 'curseforge') {
+      const kind =
+        type.id === 'modpack'
+          ? 'modpack'
+          : type.id === 'resourcepack'
+            ? 'resourcepack'
+            : type.id === 'datapack'
+              ? 'datapack'
+              : type.id === 'shader'
+                ? 'shaderpack'
+              : 'mod';
+      data = await window.zenon.curseforgeSearchMods({
+        query: discoveryQuery,
+        mcVersion: version,
+        loader,
+        kind,
+        pageSize: DISCOVERY_PAGE_SIZE,
+        index: discoveryOffset
+      });
+    } else {
+      const kind =
+        type.id === 'modpack'
+          ? 'modpack'
+          : type.id === 'resourcepack'
+            ? 'resourcepack'
+            : type.id === 'datapack'
+              ? 'datapack'
+              : type.id === 'shader'
+                ? 'shaderpack'
+                : 'mod';
+
+      const mrPromise = window.zenon.searchModrinth({
+        query: discoveryQuery,
+        version,
+        loader,
+        projectType: type.projectType,
+        limit: DISCOVERY_PAGE_SIZE,
+        offset: discoveryOffset
+      });
+
+      const cfPromise = kind
+        ? window.zenon.curseforgeSearchMods({
+            query: discoveryQuery,
+            mcVersion: version,
+            loader,
+            kind,
+            pageSize: DISCOVERY_PAGE_SIZE,
+            index: discoveryOffset
+          })
+        : Promise.resolve({ hits: [], total_hits: 0 });
+
+      const [mr, cf] = await Promise.allSettled([mrPromise, cfPromise]);
+      const mrVal = mr.status === 'fulfilled' ? mr.value : { hits: [], total_hits: 0, error: mr.reason?.message || String(mr.reason || '') };
+      const cfVal = cf.status === 'fulfilled' ? cf.value : { hits: [], total_hits: 0, error: cf.reason?.message || String(cf.reason || '') };
+
+      const mrHits = Array.isArray(mrVal?.hits) ? mrVal.hits.map((h) => ({ ...h, __provider: 'modrinth' })) : [];
+      const cfHits = Array.isArray(cfVal?.hits) ? cfVal.hits.map((h) => ({ ...h, __provider: 'curseforge' })) : [];
+      const merged = [...mrHits, ...cfHits];
+
+      data = {
+        hits: merged,
+        total_hits: (Number(mrVal?.total_hits) || 0) + (Number(cfVal?.total_hits) || 0),
+        error: [errToText(mrVal?.error), errToText(cfVal?.error)].filter(Boolean).join(' · ')
+      };
+    }
   } catch (e) {
     const msg = e?.message || String(e) || 'Search failed';
     resultsEl.innerHTML = `<div class="empty-inline discovery-hint">Search failed: ${escapeHtml(String(msg).slice(0, 220))}</div>`;
@@ -291,7 +403,8 @@ async function runDiscoverySearch(offset) {
       pagerEl.style.display = 'none';
       pagerEl.innerHTML = '';
     }
-    const extra = data?.error ? `<p style="margin-top:8px;color:var(--text-muted);font-size:12px">${escapeHtml(String(data.error).slice(0, 180))}</p>` : '';
+    const extraText = errToText(data?.error);
+    const extra = extraText ? `<p style="margin-top:8px;color:var(--text-muted);font-size:12px">${escapeHtml(String(extraText).slice(0, 180))}</p>` : '';
     resultsEl.innerHTML = `
       <div class="empty-state discovery-empty">
         <h3>No results</h3>
@@ -305,9 +418,14 @@ async function runDiscoverySearch(offset) {
   resultsEl.innerHTML = `<div class="discovery-grid">${hits
     .map((mod) => {
       const initial = (mod.title || '?').charAt(0);
+      const provider = mod.__provider || (String(mod.project_id || '').startsWith('cf:') ? 'curseforge' : 'modrinth');
+      const providerChip = discoveryProvider === 'all'
+        ? `<span class="tag tag-version" style="margin-left:auto;opacity:.9">${provider === 'curseforge' ? 'CurseForge' : 'Modrinth'}</span>`
+        : '';
       const iconBlock = mod.icon_url
         ? `<img class="discovery-card-icon" src="${escapeHtml(mod.icon_url)}" alt="" onerror="this.outerHTML='<div class=\\'discovery-card-icon-ph\\'>${escapeHtml(initial)}</div>'">`
         : `<div class="discovery-card-icon-ph">${escapeHtml(initial)}</div>`;
+      const dl = Number(mod.downloads);
       return `
     <article class="discovery-card glow-card">
       <div class="discovery-card-top">
@@ -316,11 +434,10 @@ async function runDiscoverySearch(offset) {
           <h3 class="discovery-card-title">${escapeHtml(mod.title)}</h3>
           <p class="discovery-card-author">${escapeHtml(mod.author || 'Unknown')}</p>
         </div>
+        ${providerChip}
       </div>
       <p class="discovery-card-desc">${escapeHtml((mod.description || '').slice(0, 140))}${(mod.description || '').length > 140 ? '…' : ''}</p>
-      <div class="discovery-card-meta">
-        <span>${formatDownloads(mod.downloads)} dl</span>
-      </div>
+      ${Number.isFinite(dl) ? `<div class="discovery-card-meta"><span>${formatDownloads(dl)} dl</span></div>` : `<div class="discovery-card-meta"></div>`}
       <button type="button" class="btn btn-primary btn-sm discovery-install" data-id="${mod.project_id}" data-title="${escapeHtml(mod.title)}" data-icon="${escapeHtml(mod.icon_url || '')}" data-author="${escapeHtml(mod.author || '')}">
         Install
       </button>
@@ -333,15 +450,18 @@ async function runDiscoverySearch(offset) {
   resultsEl.querySelectorAll('.discovery-install').forEach((btn) => {
     btn.addEventListener('click', () => {
       const typeDef = currentDiscoveryType();
-      if (typeDef.id === 'modpack') {
-        zenonOpenInstallModal(btn.dataset.id, btn.dataset.title, 'modpack', { loaders: ['mrpack'] }, {
+      const pid = String(btn.dataset.id || '');
+      if (typeDef.id === 'modpack' && !pid.startsWith('cf:')) {
+        // Modrinth modpacks create a new instance.
+        zenonOpenInstallModal(pid, btn.dataset.title, 'modpack', { loaders: ['mrpack'] }, {
           modpackAsNewInstance: true,
           mcVersionOverride: getDiscoveryFilterVersion(),
           iconUrl: btn.dataset.icon || ''
         });
         return;
       }
-      openDiscoveryInstallTargetModal(btn.dataset.id, btn.dataset.title, btn.dataset.icon || '', btn.dataset.author || '');
+      // Everything else (including CurseForge modpacks) installs to an existing instance.
+      openDiscoveryInstallTargetModal(pid, btn.dataset.title, btn.dataset.icon || '', btn.dataset.author || '');
     });
   });
 }
