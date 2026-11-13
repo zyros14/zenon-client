@@ -648,7 +648,8 @@ async function onLibraryInstalledClick(e) {
 
   if (action.dataset.action === 'toggle') {
     await window.zenon.toggleContent(inst.id, libraryContentKind, filename);
-    await renderLibrary();
+    // Refresh just the installed list — full page re-render feels janky.
+    await refreshLibraryInstalledTableOnly();
   }
   if (action.dataset.action === 'delete-mod') {
     if (!confirm(`Remove ${filename.replace('.disabled', '')}?`)) return;
@@ -747,7 +748,12 @@ async function zenonOpenInstallModal(projectId, title, contentKind, versionQuery
         });
       }
       if (result.success) {
-        showToast(modpackAsNewInstance ? `${title} — new instance created` : `${title} installed`, 'success');
+        if (modpackAsNewInstance) {
+          showToast(`${title} — new instance created`, 'success');
+        } else {
+          showToast(describeDependencyInstall(title, result), 'success', 6000);
+          showDependencyFailures(result);
+        }
         closeModal('modal-mod-download');
         if (modpackAsNewInstance && result.instance) {
           State.instances = await window.zenon.getInstances();

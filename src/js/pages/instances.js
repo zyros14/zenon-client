@@ -23,6 +23,7 @@ async function renderInstances() {
       <div class="page-header">
         <div style="display:flex;align-items:center;justify-content:space-between">
           <div>
+            <span class="page-kicker">Manage</span>
             <h1 class="page-title">Instances</h1>
             <p class="page-subtitle">${State.instances.length} instance${State.instances.length !== 1 ? 's' : ''} · click a card to open its library</p>
           </div>
@@ -231,7 +232,9 @@ function wireEimRamSlider() {
   const sync = (v) => {
     let n = Math.round(Number(v));
     if (!Number.isFinite(n)) n = 2048;
-    n = Math.max(512, Math.min(32768, n));
+    // Upper bound comes from the slider's max, which is set to the detected system RAM.
+    const maxMb = Number(slider.max) || 32768;
+    n = Math.max(512, Math.min(maxMb, n));
     slider.value = String(n);
     input.value = String(n);
     label.textContent = String(n);
@@ -239,6 +242,17 @@ function wireEimRamSlider() {
   };
   slider.oninput = () => sync(slider.value);
   input.onchange = () => sync(input.value);
+}
+
+/** Detect system RAM once per session and cache it on State. */
+async function ensureSystemRamInfo() {
+  if (State.systemInfo?.totalMemMb) return State.systemInfo;
+  try {
+    State.systemInfo = await window.zenon.getSystemInfo();
+  } catch (e) {
+    State.systemInfo = { totalMemMb: 32768, recommendedMaxMb: 8192 };
+  }
+  return State.systemInfo;
 }
 
 function bindEimToggleHandlers() {
@@ -456,7 +470,18 @@ async function openEditInstanceModal(id) {
   document.getElementById('eim-java').value = inst.javaPathOverride || '';
 
   document.getElementById('eim-mem-custom').checked = !!inst.memoryCustomEnabled;
-  const mb = parseRamToMb(inst.maxRamOverride || State.settings?.maxRam);
+
+  // Slider and input max out at the detected system RAM — users can allocate everything they have.
+  const sys = await ensureSystemRamInfo();
+  const totalMemMb = Math.max(1024, Math.floor((sys?.totalMemMb || 32768) / 1024) * 1024);
+  const sliderEl = document.getElementById('eim-ram-slider');
+  const inputEl = document.getElementById('eim-ram-mb-input');
+  sliderEl.max = String(totalMemMb);
+  inputEl.max = String(totalMemMb);
+  const ramMaxLabel = document.querySelector('.eim-ram-slider-row .eim-ram-max');
+  if (ramMaxLabel) ramMaxLabel.textContent = `${totalMemMb} MB`;
+
+  const mb = Math.min(parseRamToMb(inst.maxRamOverride || State.settings?.maxRam), totalMemMb);
   document.getElementById('eim-ram-slider').value = String(mb);
   document.getElementById('eim-ram-mb-input').value = String(mb);
   document.getElementById('eim-ram-mb-label').textContent = String(mb);
@@ -794,5 +819,10 @@ async function launchInstance(id) {
     setConsoleStatus('Running', true);
     State.runningInstanceId = id;
     showToast(`${inst.name} is running!`, 'success');
+    // "Close on Launch" setting — the game process keeps running after the launcher exits.
+    try {
+      const s = await window.zenon.getSettings();
+      if (s?.closeOnLaunch) window.zenon.close();
+    } catch (e) {}
   }
 }

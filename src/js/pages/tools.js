@@ -11,6 +11,7 @@ async function renderTools() {
       <div class="page-header">
         <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
+            <span class="page-kicker">Shortcuts</span>
             <h1 class="page-title">Tools</h1>
             <p class="page-subtitle">Quick actions and power-user shortcuts.</p>
           </div>
@@ -89,6 +90,22 @@ async function renderTools() {
         </div>
         <div id="tools-log-view" style="display:none;margin-top:14px"></div>
       </div>
+
+      <!-- Updates -->
+      <div class="card">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:800;font-size:14px">Updates</div>
+            <div style="margin-top:6px;color:var(--text-muted);font-size:12px">Check for new versions of Zenon Client.</div>
+          </div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
+            <button type="button" class="btn btn-ghost" id="tools-check-updates-btn">Check for updates</button>
+            <button type="button" class="btn btn-primary" id="tools-install-update-btn" disabled>Install update</button>
+          </div>
+        </div>
+        <div id="tools-update-status" style="margin-top:8px;color:var(--text-muted);font-size:12px">Idle</div>
+        <div id="tools-update-progress" style="display:none;margin-top:8px"></div>
+      </div>
     </div>
   `;
 
@@ -139,6 +156,78 @@ async function renderTools() {
     const text = res?.text || '';
     wrap.innerHTML = `<pre class="id-log-pre" style="max-height: min(52vh, 520px)">${escapeHtml(text)}</pre>`;
   });
+
+  // ===== Update UI =====
+  const statusEl = document.getElementById('tools-update-status');
+  const progEl = document.getElementById('tools-update-progress');
+  const installBtn = document.getElementById('tools-install-update-btn');
+
+  const setUpdateStatus = (text) => {
+    if (statusEl) statusEl.textContent = text || 'Idle';
+  };
+  const setProgress = (pct, note) => {
+    if (!progEl) return;
+    const p = Math.max(0, Math.min(100, Math.round(Number(pct) || 0)));
+    progEl.style.display = 'block';
+    progEl.innerHTML = `
+      <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:6px">
+        <div style="color:var(--text-muted);font-size:12px">${escapeHtml(note || 'Downloading…')}</div>
+        <div style="color:var(--text-muted);font-size:12px">${p}%</div>
+      </div>
+      <div style="height:8px;border-radius:999px;border:1px solid var(--border);background:var(--bg-tertiary);overflow:hidden">
+        <div style="height:100%;width:${p}%;background:linear-gradient(90deg,var(--accent),var(--purple))"></div>
+      </div>
+    `;
+  };
+
+  setUpdateStatus('Idle');
+
+  document.getElementById('tools-check-updates-btn')?.addEventListener('click', async () => {
+    const res = await window.zenon.updateCheck?.();
+    if (res?.success) {
+      window.zenonActivity?.add?.('Checked for updates', 'info');
+      showToast('Checking for updates…', 'info', 1600);
+    } else {
+      window.zenonActivity?.add?.('Update check failed', 'error');
+      showToast(res?.error || 'Update check failed', 'error', 4500);
+    }
+  });
+
+  installBtn?.addEventListener('click', async () => {
+    const res = await window.zenon.updateInstall?.();
+    if (!res?.success) {
+      window.zenonActivity?.add?.('Update install failed', 'error');
+      showToast(res?.error || 'Could not install update', 'error', 5000);
+    } else {
+      window.zenonActivity?.add?.('Restarting to install update', 'info');
+    }
+  });
+
+  if (!window.__toolsUpdateUnsub && typeof window.zenon?.onUpdateEvent === 'function') {
+    window.__toolsUpdateUnsub = window.zenon.onUpdateEvent((ev) => {
+      if (!ev?.event) return;
+      if (ev.event === 'available') {
+        setUpdateStatus('Update available — downloading…');
+        if (installBtn) installBtn.disabled = true;
+      } else if (ev.event === 'none') {
+        setUpdateStatus('No updates found.');
+        if (installBtn) installBtn.disabled = true;
+      } else if (ev.event === 'progress') {
+        const pct = ev?.progress?.percent ?? 0;
+        const note = ev?.progress?.bytesPerSecond
+          ? `Downloading… ${Math.round(ev.progress.bytesPerSecond / (1024 * 1024))} MB/s`
+          : 'Downloading…';
+        setUpdateStatus('Downloading update…');
+        setProgress(pct, note);
+      } else if (ev.event === 'downloaded') {
+        setUpdateStatus('Update downloaded — restart to install.');
+        if (installBtn) installBtn.disabled = false;
+      } else if (ev.event === 'error') {
+        setUpdateStatus(`Update error: ${ev.message || 'unknown'}`);
+        if (installBtn) installBtn.disabled = true;
+      }
+    });
+  }
 }
 
 window.renderTools = renderTools;

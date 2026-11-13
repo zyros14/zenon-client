@@ -1,6 +1,6 @@
 {
   "name": "zenon-client",
-  "version": "1.0.0",
+  "version": "1.0.8",
   "description": "Zenon Client - A modern Minecraft launcher",
   "main": "main.js",
   "scripts": {
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "adm-zip": "^0.5.12",
+    "electron-updater": "^6.8.11",
     "fs-extra": "^11.2.0",
     "minecraft-launcher-core": "^3.7.1",
     "node-fetch": "^2.7.0",
@@ -19,7 +20,9 @@
   },
   "devDependencies": {
     "electron": "28.0.0",
-    "electron-builder": "^26.8.1"
+    "electron-builder": "^26.8.1",
+    "png2icons": "^2.0.1",
+    "ws": "^8.23.0"
   },
   "author": "Zenon Client",
   "license": "MIT",
@@ -35,10 +38,17 @@
     ],
     "win": {
       "target": "nsis",
-      "artifactName": "${productName} Setup ${version}.${ext}"
+      "artifactName": "Zenon-Client-Setup-${version}.${ext}"
     },
     "directories": {
       "output": "dist"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "zyros14",
+        "repo": "zenon-client"
+      }
+    ]
   }
 }

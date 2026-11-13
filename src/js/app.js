@@ -32,6 +32,54 @@ function showToast(message, type = 'info', duration = 3000) {
   }, duration);
 }
 
+// ===== Update reminder banner =====
+if (!window.__zenonUpdatesWired && typeof window.zenon?.onUpdateEvent === 'function') {
+  window.__zenonUpdatesWired = true;
+
+  const __updateKey = 'zenon.updateReminder.v1';
+  const setReminder = (on, text = '') => {
+    const el = document.getElementById('update-reminder');
+    const tx = document.getElementById('update-reminder-text');
+    if (tx) tx.textContent = text || 'Update ready — restart to install';
+    if (el) el.style.display = on ? 'flex' : 'none';
+    try { localStorage.setItem(__updateKey, JSON.stringify({ on: !!on, text: String(text || '') })); } catch (e) {}
+  };
+  const readReminder = () => {
+    try {
+      const raw = localStorage.getItem(__updateKey);
+      const j = raw ? JSON.parse(raw) : null;
+      return j && typeof j === 'object' ? j : { on: false, text: '' };
+    } catch (e) { return { on: false, text: '' }; }
+  };
+
+  // Restore reminder on startup/navigation.
+  (async () => {
+    const r = readReminder();
+    if (r?.on) setReminder(true, r.text || 'Update ready — restart to install');
+  })();
+
+  document.getElementById('update-reminder-install')?.addEventListener('click', async () => {
+    const res = await window.zenon.updateInstall?.();
+    if (!res?.success) showToast(res?.error || 'Could not install update', 'error', 5000);
+  });
+  document.getElementById('update-reminder-dismiss')?.addEventListener('click', () => {
+    setReminder(false, '');
+    showToast('Okay — I’ll remind you later.', 'info', 1800);
+  });
+
+  window.zenon.onUpdateEvent((ev) => {
+    if (!ev?.event) return;
+    if (ev.event === 'available') {
+      showToast('Update available — downloading…', 'info', 3500);
+    } else if (ev.event === 'downloaded') {
+      showToast('Update ready — restart to apply', 'success', 5000);
+      setReminder(true, 'Update ready — restart to install');
+    } else if (ev.event === 'error') {
+      showToast(`Update error: ${ev.message || 'unknown'}`, 'error', 5000);
+    }
+  });
+}
+
 // ===== Navigation =====
 let __navSeq = 0;
 async function navigateTo(page, opts = {}) {
@@ -60,6 +108,7 @@ async function navigateTo(page, opts = {}) {
 async function renderPage(page) {
   const content = document.getElementById('main-content');
   content.innerHTML = '<div class="page"><div class="loading-spinner"></div></div>';
+  content.scrollTop = 0;
 
   switch (page) {
     case 'home': await renderHome(); break;
@@ -70,6 +119,30 @@ async function renderPage(page) {
     case 'tools': await renderTools(); break;
     case 'settings': await renderSettings(); break;
   }
+
+  initReveal();
+}
+
+// ===== Reveal-on-scroll =====
+function initReveal() {
+  const els = document.querySelectorAll('.reveal:not(.visible)');
+  if (!('IntersectionObserver' in window)) {
+    els.forEach((el) => el.classList.add('visible'));
+    return;
+  }
+  let idx = 0;
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add('visible');
+        observer.unobserve(entry.target);
+      }
+    }
+  }, { threshold: 0.06 });
+  els.forEach((el) => {
+    el.style.setProperty('--reveal-delay', `${Math.min(idx++ * 70, 350)}ms`);
+    observer.observe(el);
+  });
 }
 
 // ===== Sidebar Instance Badge =====
@@ -181,8 +254,24 @@ function getInstanceIcon(instance) {
   const src = instanceIconSrc(instance);
   if (src) return `<img class="instance-icon-img" src="${escapeHtml(src)}" alt="" draggable="false" />`;
   const ic = instance.icon;
-  if (ic && ic !== 'default' && typeof ic === 'string') return escapeHtml(ic.charAt(0).toUpperCase());
-  return escapeHtml((instance.name || '?').charAt(0).toUpperCase());
+  // Built-in glyph choices (A–H) keep their letter icon…
+  if (ic && ic !== 'default' && typeof ic === 'string' && ic.length === 1) {
+    return escapeHtml(ic.toUpperCase());
+  }
+  // …everything else gets the default orb, tinted per instance.
+  return instanceOrbHtml(instance);
+}
+
+/** Default instance avatar: one animated nebula orb (APNG), hue-rotated to a stable color per instance. */
+const INSTANCE_ORB_HUES = [0, 70, 140, 210, 280, 330];
+
+function instanceOrbHtml(instance) {
+  const id = String((instance && (instance.id || instance.name)) || '');
+  let h = 0;
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
+  const hue = INSTANCE_ORB_HUES[h % INSTANCE_ORB_HUES.length];
+  const filter = hue ? ` style="filter:hue-rotate(${hue}deg) saturate(1.15)"` : '';
+  return `<img class="instance-icon-img" src="assets/orbs/orb.png" alt="" draggable="false"${filter} />`;
 }
 
 const THEME_IDS = ['zenon', 'midnight', 'aurora', 'slate', 'paper'];

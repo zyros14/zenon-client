@@ -8,8 +8,16 @@ const { v4: uuidv4 } = require('uuid');
 const AdmZip = require('adm-zip');
 const { Authflow, Titles } = require('prismarine-auth');
 const crypto = require('crypto');
+const os = require('os');
 
 let mainWindow;
+
+/** Total physical RAM (MB) — drives RAM allocation limits everywhere in the launcher. */
+const TOTAL_RAM_MB = Math.max(1024, Math.floor(os.totalmem() / (1024 * 1024)));
+/** Sensible default allocation: 1/4 of system RAM, clamped to 2–16 GB. */
+function recommendedMaxRamMb() {
+  return Math.min(16384, Math.max(2048, Math.round(TOTAL_RAM_MB / 4 / 512) * 512));
+}
 
 // Data directories
 const USER_DATA = app.getPath('userData');
@@ -28,6 +36,10 @@ fs.ensureDirSync(SHARED_MC_CACHE);
 
 const SERVERS_DIR = path.join(USER_DATA, 'servers');
 fs.ensureDirSync(SERVERS_DIR);
+
+/** Launcher-managed Java runtimes (downloaded when the system Java is too old for a MC version). */
+const JAVA_RUNTIMES_DIR = path.join(USER_DATA, 'java-runtimes');
+fs.ensureDirSync(JAVA_RUNTIMES_DIR);
 
 // Hide noisy auth library console output (app polish)
 if (!global.__zenonStdoutPatched) {
@@ -562,9 +574,20 @@ async function ensureMinecraftAuthFresh() {
     deviceType: 'Win32'
   });
 
-  const mc = await withSilencedAuthLogs(() =>
-    flow.getMinecraftJavaToken({ fetchProfile: false, fetchEntitlements: false })
-  );
+  // Bounded silent refresh: if the cached Microsoft session is also expired, prismarine would
+  // start a device-code sign-in nobody can see (packaged GUI) and the launch would hang forever.
+  const SILENT_REFRESH_MS = 90_000;
+  const mc = await Promise.race([
+    withSilencedAuthLogs(() => flow.getMinecraftJavaToken({ fetchProfile: false, fetchEntitlements: false })),
+    new Promise((_, rej) =>
+      setTimeout(
+        () => rej(new Error('Your Microsoft session has expired. Please sign in again (Settings → Logout, then sign in).')),
+        SILENT_REFRESH_MS
+      )
+    )
+  ]).catch((e) => {
+    throw e instanceof Error ? e : new Error(String(e));
+  });
   if (!mc?.token) {
     throw new Error('Not logged in. Please sign in with Microsoft.');
   }
@@ -601,17 +624,62 @@ function getDefaultSettings() {
     msaClientId: DEFAULT_MSA_CLIENT_ID,
     msaScopes: 'XboxLive.signin offline_access',
     auth: null,
-    offlineEnabled: false
+    offlineEnabled: false,
+    autoCheckUpdates: true,
+    /** Auto-detected system RAM + one-time auto-configuration flag. */
+    ramDetectedMb: TOTAL_RAM_MB,
+    ramAutoConfigured: false
   };
 }
 
+/** Clamp a RAM value (MB) to the range the launcher allows: 512 MB … total system RAM. */
+function clampRamMb(mb, fallback = 2048) {
+  const n = parseInt(String(mb ?? ''), 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return Math.min(TOTAL_RAM_MB, Math.max(512, n));
+}
+
 function loadSettings() {
+  let settings;
   try {
     if (fs.existsSync(SETTINGS_FILE)) {
-      return { ...getDefaultSettings(), ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
+      settings = { ...getDefaultSettings(), ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) };
     }
   } catch (e) {}
-  return getDefaultSettings();
+  if (!settings) settings = getDefaultSettings();
+
+  // One-time auto-detection: pick a recommended allocation from the real system RAM.
+  if (!settings.ramAutoConfigured) {
+    const rec = recommendedMaxRamMb();
+    // Keep whatever the user already picked (clamped to a sane range), else use the recommendation.
+    const maxMb = clampRamMb(parseRamStringToMb(settings.maxRam) || rec, rec);
+    settings.maxRam = mbToRamLabel(maxMb);
+    settings.minRam = settings.minRam || '512M';
+    settings.ramDetectedMb = TOTAL_RAM_MB;
+    settings.ramAutoConfigured = true;
+    settings.ramRecommended = { minMb: 512, maxMb: rec };
+    try { saveSettings(settings); } catch (e) {}
+  }
+  settings.ramDetectedMb = TOTAL_RAM_MB;
+  return settings;
+}
+
+function parseRamStringToMb(s) {
+  if (!s) return 0;
+  const t = String(s).trim().toUpperCase();
+  const gm = t.match(/^([\d.]+)\s*G$/);
+  if (gm) return Math.round(parseFloat(gm[1]) * 1024);
+  const mm = t.match(/^([\d.]+)\s*M$/);
+  if (mm) return Math.round(parseFloat(mm[1]));
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function mbToRamLabel(mb) {
+  const v = Math.round(Number(mb) || 0);
+  if (v <= 0) return '2G';
+  if (v % 1024 === 0) return `${v / 1024}G`;
+  return `${v}M`;
 }
 
 function saveSettings(settings) {
@@ -664,7 +732,7 @@ function writeInstanceIconFile(instanceId, buffer, extOrMime) {
 async function downloadInstanceIconFromUrl(instanceId, url) {
   const u = String(url || '').trim();
   if (!u) return null;
-  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
   if (!res.ok) throw new Error(`Icon download failed (HTTP ${res.status})`);
   const ct = res.headers.get('content-type') || '';
   const buf = await res.buffer();
@@ -962,18 +1030,22 @@ function listServerContent(serverId, kind) {
   const files = fs.readdirSync(dir);
   return files
     .filter((f) => /\.(jar|zip)(?:\.disabled)?$/i.test(f))
-    .map((file) => ({
-      filename: file,
-      enabled: !file.endsWith('.disabled'),
-      displayName: normalizeDisplayName(file),
-      size: fs.statSync(path.join(dir, file)).size,
-      path: path.join(dir, file),
-      kind,
-      projectId: meta?.[file]?.projectId || null,
-      title: meta?.[file]?.title || null,
-      iconUrl: meta?.[file]?.iconUrl || null,
-      author: meta?.[file]?.author || null
-    }));
+    .map((file) => {
+      // Same `.disabled` fallback as listInstanceContent so server content keeps its title/icon.
+      const metaEntry = meta?.[file] || (file.endsWith('.disabled') ? meta?.[file.slice(0, -'.disabled'.length)] : null) || null;
+      return {
+        filename: file,
+        enabled: !file.endsWith('.disabled'),
+        displayName: normalizeDisplayName(file),
+        size: fs.statSync(path.join(dir, file)).size,
+        path: path.join(dir, file),
+        kind,
+        projectId: metaEntry?.projectId || null,
+        title: metaEntry?.title || null,
+        iconUrl: metaEntry?.iconUrl || null,
+        author: metaEntry?.author || null
+      };
+    });
 }
 
 function toggleServerContent(serverId, kind, filename) {
@@ -991,6 +1063,13 @@ function deleteServerContent(serverId, kind, filename) {
   const filePath = path.join(dir, filename);
   if (fs.existsSync(filePath)) {
     fs.removeSync(filePath);
+    try {
+      const idx = readServerContentMeta(serverId, kind);
+      const base = String(filename).replace(/\.disabled$/i, '');
+      if (idx[filename]) delete idx[filename];
+      if (base !== filename && idx[base]) delete idx[base];
+      writeServerContentMeta(serverId, kind, idx);
+    } catch (e) {}
     return true;
   }
   return false;
@@ -1027,7 +1106,45 @@ async function downloadServerProjectFile(serverId, kind, versionData, meta = nul
       }
     } catch (e2) {}
 
-    return { success: true, filename: pick.filename };
+    // Auto-install required Modrinth dependencies alongside the server mod.
+    let deps = null;
+    if (String(kind || '').toLowerCase() === 'mod') {
+      try {
+        const cfg = readServerConfig(serverId);
+        const mcVersion = cfg?.version || '';
+        const serverKind = String(cfg?.serverKind || '').toLowerCase();
+        const loader = serverKind === 'fabric' || serverKind === 'forge' ? serverKind : null;
+        const installedIds = new Set();
+        try {
+          const diskFiles = new Set(fs.readdirSync(targetDir).map((f) => String(f).toLowerCase()));
+          for (const [fname, m] of Object.entries(readServerContentMeta(serverId, kind) || {})) {
+            if (!m?.projectId) continue;
+            const key = String(fname).toLowerCase();
+            if (diskFiles.has(key) || diskFiles.has(`${key}.disabled`)) {
+              installedIds.add(String(m.projectId));
+            }
+          }
+        } catch (e3) {}
+        deps = await installModrinthRequiredDeps({
+          kind,
+          mcVersion,
+          loader,
+          rootVersionData: versionData,
+          targetDir,
+          isAlreadyInstalled: async (pid) => installedIds.has(String(pid)),
+          recordMeta: async (filename, m) => {
+            const idx = readServerContentMeta(serverId, kind);
+            idx[filename] = m;
+            writeServerContentMeta(serverId, kind, idx);
+            if (m?.projectId) installedIds.add(String(m.projectId));
+          }
+        });
+      } catch (e3) {
+        deps = { installed: [], skipped: [], failed: ['dependency scan failed'] };
+      }
+    }
+
+    return { success: true, filename: pick.filename, deps };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -1045,18 +1162,25 @@ function listInstanceContent(instanceId, kind) {
   const dir = getContentDir(instanceId, kind);
   const meta = readContentMeta(instanceId, kind);
   const files = fs.readdirSync(dir);
-  return files.map(file => ({
-    filename: file,
-    enabled: !file.endsWith('.disabled'),
-    displayName: normalizeDisplayName(file),
-    size: fs.statSync(path.join(dir, file)).size,
-    path: path.join(dir, file),
-    kind,
-    projectId: meta?.[file]?.projectId || null,
-    title: meta?.[file]?.title || null,
-    iconUrl: meta?.[file]?.iconUrl || null,
-    author: meta?.[file]?.author || null
-  }));
+  return files.map(file => {
+    // Meta is stored under the enabled filename; when toggled off the file gains a
+    // `.disabled` suffix, so fall back to the base name to keep title/icon/author.
+    const metaEntry = meta?.[file] || (file.endsWith('.disabled') ? meta?.[file.slice(0, -'.disabled'.length)] : null) || null;
+    let size = 0;
+    try { size = fs.statSync(path.join(dir, file)).size; } catch (e) { return null; }
+    return {
+      filename: file,
+      enabled: !file.endsWith('.disabled'),
+      displayName: normalizeDisplayName(file),
+      size,
+      path: path.join(dir, file),
+      kind,
+      projectId: metaEntry?.projectId || null,
+      title: metaEntry?.title || null,
+      iconUrl: metaEntry?.iconUrl || null,
+      author: metaEntry?.author || null
+    };
+  }).filter(Boolean);
 }
 
 function toggleInstanceContent(instanceId, kind, filename) {
@@ -1074,6 +1198,14 @@ function deleteInstanceContent(instanceId, kind, filename) {
   const filePath = path.join(dir, filename);
   if (fs.existsSync(filePath)) {
     fs.removeSync(filePath);
+    // Keep the metadata index consistent (title/icon entries for missing jars are stale).
+    try {
+      const idx = readContentMeta(instanceId, kind);
+      const base = String(filename).replace(/\.disabled$/i, '');
+      if (idx[filename]) delete idx[filename];
+      if (base !== filename && idx[base]) delete idx[base];
+      writeContentMeta(instanceId, kind, idx);
+    } catch (e) {}
     return true;
   }
   return false;
@@ -1388,7 +1520,7 @@ function compareForgeFullIdDesc(a, b) {
   return String(b).localeCompare(String(a));
 }
 
-const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.0 (Electron; +https://github.com/)' };
+const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.0.8 (Electron; +https://github.com/)' };
 
 /** e.g. 1.21.10-rc1 → 1.21.10 (Forge promos/maven use release ids). */
 function forgeMcVersionFallbacks(mcVersion) {
@@ -1571,7 +1703,7 @@ async function createServerEntry(data) {
     forgeFull: serverKind === 'forge' ? data.forgeFull : null,
     fabricLoaderVersion: serverKind === 'fabric' ? data.fabricLoaderVersion : null,
     fabricLaunchJar: fabricLaunchJarSaved,
-    maxRamMb: Math.min(Math.max(parseInt(String(data?.maxRamMb || '2048'), 10) || 2048, 512), 16384),
+    maxRamMb: clampRamMb(parseInt(String(data?.maxRamMb || '2048'), 10) || 2048, 2048),
     dir,
     created: new Date().toISOString()
   };
@@ -1612,6 +1744,11 @@ function sendToRenderer(channel, payload) {
       mainWindow.webContents.send(channel, payload);
     }
   } catch (e) {}
+}
+
+/** Send a line to the in-app Launch Console (main-process scope so helpers can log too). */
+function sendLaunchLog(type, message) {
+  sendToRenderer('launch-log', { type, message });
 }
 
 function readEulaAccepted(serverDir) {
@@ -1666,10 +1803,7 @@ function resolveDedicatedServerLaunch(cfg) {
   if (!dir || !fs.existsSync(dir)) return { error: 'Server folder missing' };
   const settings = loadSettings();
   const java = String(settings.javaPath || 'java').trim() || 'java';
-  const maxRam = Math.min(
-    Math.max(parseInt(String(cfg.maxRamMb || '2048'), 10) || 2048, 512),
-    16384
-  );
+  const maxRam = clampRamMb(parseInt(String(cfg.maxRamMb || '2048'), 10) || 2048, 2048);
   const jvm = [`-Xms${Math.min(512, maxRam)}M`, `-Xmx${maxRam}M`];
   const kind = String(cfg.serverKind || 'vanilla').toLowerCase();
 
@@ -1997,7 +2131,7 @@ async function searchModrinth({ query, version, loader, projectType = 'mod', lim
     const url = `https://api.modrinth.com/v2/search?query=${encodeURIComponent(query || '')}&facets=${encodeURIComponent(facetsStr)}&limit=${limit}&offset=${offset}`;
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
     });
     const text = await res.text();
     let data;
@@ -2042,7 +2176,7 @@ async function spigetSearchResources({ query, size = 20, page = 1, mode = 'searc
       const safeQ = encodeURIComponent(q);
       url = `https://api.spiget.org/v2/search/resources/${safeQ}?size=${lim}&page=${pg}`;
     }
-    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -2055,7 +2189,7 @@ async function spigetGetResource(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
   if (!res.ok) throw new Error(`Spiget resource HTTP ${res.status}`);
   return await res.json();
 }
@@ -2064,13 +2198,13 @@ async function spigetDownloadResourceJar(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}/download`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.0' }, redirect: 'follow' });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`Spiget download HTTP ${res.status}`);
   const buf = await res.buffer();
   if (!buf?.length) throw new Error('Empty download');
   // Try to infer filename from content-disposition if provided.
   const cd = res.headers.get('content-disposition') || '';
-  const m = cd.match(/filename\\*?=(?:UTF-8''|\"?)([^\";]+)\"?/i);
+  const m = cd.match(/filename\*?=(?:UTF-8''|"?)([^";]+)"?/i);
   const filename = m ? decodeURIComponent(m[1]) : '';
   return { buffer: buf, filenameHint: filename };
 }
@@ -2092,12 +2226,126 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
     if (params.length) url += '?' + params.join('&');
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
     });
     return await res.json();
   } catch (e) {
     return [];
   }
+}
+
+// ----- Modrinth dependency auto-install -----
+const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.0.8' };
+const __mrProjectCache = new Map(); // projectId -> { at, data }
+
+async function fetchModrinthProjectCached(projectId) {
+  const key = String(projectId || '');
+  if (!key) return null;
+  const hit = __mrProjectCache.get(key);
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) return hit.data;
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/project/${encodeURIComponent(key)}`, { headers: MODRINTH_UA });
+    if (!res.ok) return null;
+    const data = await res.json();
+    __mrProjectCache.set(key, { at: Date.now(), data });
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function fetchModrinthVersionById(versionId) {
+  try {
+    const res = await fetch(`https://api.modrinth.com/v2/version/${encodeURIComponent(String(versionId))}`, { headers: MODRINTH_UA });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    return null;
+  }
+}
+
+function modrinthVersionCompatible(version, mcVersion, loader) {
+  if (!version) return false;
+  if (mcVersion && Array.isArray(version.game_versions) && version.game_versions.length && !version.game_versions.includes(mcVersion)) return false;
+  if (loader && Array.isArray(version.loaders) && version.loaders.length && !version.loaders.includes(loader)) return false;
+  return true;
+}
+
+/**
+ * Resolve + download required Modrinth dependencies for a version (BFS, depth-capped).
+ * Only applies to kind 'mod'. Returns display titles in installed/skipped/failed.
+ */
+async function installModrinthRequiredDeps({ kind, mcVersion, loader, rootVersionData, targetDir, isAlreadyInstalled, recordMeta }) {
+  const installed = [];
+  const skipped = [];
+  const failed = [];
+  if (String(kind || '').toLowerCase() !== 'mod') return { installed, skipped, failed };
+
+  const seenProjects = new Set([String(rootVersionData?.project_id || '')]);
+  const queue = [];
+  for (const d of (Array.isArray(rootVersionData?.dependencies) ? rootVersionData.dependencies : [])) {
+    if (d?.dependency_type !== 'required') continue;
+    if (d.project_id || d.version_id) queue.push({ projectId: d.project_id || null, versionId: d.version_id || null, depth: 1 });
+  }
+
+  const MAX_DEPS = 20;
+  let guard = 0;
+  while (queue.length && installed.length < MAX_DEPS && guard < 60) {
+    guard++;
+    const item = queue.shift();
+    let projectId = item.projectId;
+    let version = null;
+
+    if (item.versionId) {
+      version = await fetchModrinthVersionById(item.versionId);
+      if (version?.project_id) projectId = projectId || version.project_id;
+    }
+    if (!projectId) { failed.push('unknown dependency'); continue; }
+    const pid = String(projectId);
+    if (seenProjects.has(pid)) continue;
+    seenProjects.add(pid);
+
+    const proj = await fetchModrinthProjectCached(pid);
+    const title = proj?.title || pid;
+
+    // Already installed (or queued)? Don't duplicate.
+    if (await isAlreadyInstalled(pid)) { skipped.push(title); continue; }
+
+    // If the pinned version isn't compatible with this instance, resolve the closest match.
+    if (!modrinthVersionCompatible(version, mcVersion, loader)) {
+      const versions = await getProjectVersions(pid, mcVersion || null, loader || null, null);
+      version = Array.isArray(versions)
+        ? versions.find((v) => v && Array.isArray(v.files) && (v.files.find((f) => f.primary) || v.files[0]))
+        : null;
+    }
+    const file = version && Array.isArray(version.files) ? (version.files.find((f) => f.primary) || version.files[0]) : null;
+    if (!file || !file.url) { failed.push(title); continue; }
+
+    try {
+      const res = await fetch(file.url, { headers: MODRINTH_UA });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const buffer = await res.buffer();
+      fs.writeFileSync(path.join(targetDir, file.filename), buffer);
+      await recordMeta(file.filename, {
+        projectId: pid,
+        title,
+        iconUrl: proj?.icon_url || null,
+        author: null,
+        at: Date.now()
+      });
+      installed.push(title);
+      // Recurse into this dependency's own required deps (depth cap keeps chains bounded).
+      if ((item.depth || 1) < 4) {
+        for (const d of (Array.isArray(version.dependencies) ? version.dependencies : [])) {
+          if (d?.dependency_type !== 'required') continue;
+          if (d.project_id || d.version_id) queue.push({ projectId: d.project_id || null, versionId: d.version_id || null, depth: (item.depth || 1) + 1 });
+        }
+      }
+    } catch (e) {
+      failed.push(title);
+    }
+  }
+  return { installed, skipped, failed };
 }
 
 function parseMcVersionFromModrinthDep(raw) {
@@ -2134,7 +2382,7 @@ function safeJoinUnderInstanceRoot(instanceRoot, relPath) {
 async function fetchLatestFabricLoaderForMc(mcVersion) {
   try {
     const res = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -2154,7 +2402,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
     const file = versionData.files.find((f) => f.primary) || versionData.files[0];
     if (!file || !file.url) throw new Error('No modpack file on this version');
 
-    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
     if (!packRes.ok) throw new Error(`Download failed (HTTP ${packRes.status})`);
     const buffer = await packRes.buffer();
 
@@ -2210,7 +2458,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!rel || !Array.isArray(f.downloads) || !f.downloads[0]) continue;
       const dest = safeJoinUnderInstanceRoot(root, rel);
       fs.ensureDirSync(path.dirname(dest));
-      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
       if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
       const chunk = await fr.buffer();
       fs.writeFileSync(dest, chunk);
@@ -2273,7 +2521,44 @@ async function downloadProjectFile(instanceId, kind, versionData, meta = null) {
       }
     } catch (e2) {}
 
-    return { success: true, filename: file.filename };
+    // Auto-install required Modrinth dependencies alongside the mod.
+    let deps = null;
+    if (String(kind || '').toLowerCase() === 'mod') {
+      try {
+        const cfg = readInstanceConfig(instanceId);
+        const mcVersion = cfg?.version || '';
+        const loader = cfg?.loader && cfg.loader !== 'vanilla' ? cfg.loader : null;
+        const installedIds = new Set();
+        try {
+          const diskFiles = new Set(fs.readdirSync(targetDir).map((f) => String(f).toLowerCase()));
+          for (const [fname, m] of Object.entries(readContentMeta(instanceId, kind) || {})) {
+            if (!m?.projectId) continue;
+            const key = String(fname).toLowerCase();
+            if (diskFiles.has(key) || diskFiles.has(`${key}.disabled`)) {
+              installedIds.add(String(m.projectId));
+            }
+          }
+        } catch (e2) {}
+        deps = await installModrinthRequiredDeps({
+          kind,
+          mcVersion,
+          loader,
+          rootVersionData: versionData,
+          targetDir,
+          isAlreadyInstalled: async (pid) => installedIds.has(String(pid)),
+          recordMeta: async (filename, m) => {
+            const idx = readContentMeta(instanceId, kind);
+            idx[filename] = m;
+            writeContentMeta(instanceId, kind, idx);
+            if (m?.projectId) installedIds.add(String(m.projectId));
+          }
+        });
+      } catch (e2) {
+        deps = { installed: [], skipped: [], failed: ['dependency scan failed'] };
+      }
+    }
+
+    return { success: true, filename: file.filename, deps };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -2285,7 +2570,7 @@ async function fetchSignedTexturesProperty(uuid) {
   const noDashes = id.replace(/-/g, '');
   try {
     const url = `https://sessionserver.mojang.com/session/minecraft/profile/${encodeURIComponent(noDashes)}?unsigned=false`;
-    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.0' } });
+    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
     if (!res.ok) return null;
     const j = await res.json();
     const props = Array.isArray(j?.properties) ? j.properties : [];
@@ -2298,9 +2583,238 @@ async function fetchSignedTexturesProperty(uuid) {
   }
 }
 
+// ===== Java runtime resolution (each MC version needs a specific Java major) =====
+const __versionJsonCache = new Map();
+
+async function getVersionJson(versionId, manifest) {
+  const key = String(versionId || '');
+  if (!key) return null;
+  if (__versionJsonCache.has(key)) return __versionJsonCache.get(key);
+  const hit = manifest?.versions?.find((v) => v.id === key);
+  if (!hit?.url) return null;
+  const res = await nativeFetch(hit.url);
+  if (!res.ok) return null;
+  const json = await res.json();
+  __versionJsonCache.set(key, json);
+  return json;
+}
+
+/** Fallback when version metadata is unavailable (26.x → 25, 1.20.5+ → 21, 1.18+ → 17, older → 8). */
+function guessRequiredJavaMajor(mcVersion) {
+  const m = String(mcVersion || '').match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/);
+  if (!m) return 8;
+  const a = parseInt(m[1], 10);
+  const b = parseInt(m[2] || '0', 10);
+  const c = parseInt(m[3] || '0', 10);
+  if (a >= 26) return 25;
+  if (a === 1) {
+    if (b >= 21) return 21;
+    if (b === 20) return c >= 5 ? 21 : 17;
+    if (b >= 18) return 17;
+    if (b === 17) return 17;
+    return 8;
+  }
+  return 8;
+}
+
+function javaBinDir() {
+  return process.platform === 'darwin' ? path.join('Contents', 'Home', 'bin') : 'bin';
+}
+function javaExeName() {
+  return process.platform === 'win32' ? 'java.exe' : 'java';
+}
+function javaExeIn(dir) {
+  return path.join(dir, javaBinDir(), javaExeName());
+}
+
+/** Detect the Java major version of an executable (null when not a working Java). */
+function getJavaMajor(javaExe) {
+  try {
+    const r = spawnSync(javaExe, ['-version'], {
+      encoding: 'utf8',
+      timeout: 20000,
+      windowsHide: true,
+      shell: false
+    });
+    const out = `${r.stderr || ''}\n${r.stdout || ''}`;
+    const m = out.match(/version\s+"([^"]+)"/);
+    if (!m) return null;
+    const vm = m[1].match(/^(\d+)(?:\.(\d+))?/);
+    if (!vm) return null;
+    let major = parseInt(vm[1], 10);
+    if (major === 1 && vm[2]) major = parseInt(vm[2], 10); // legacy "1.8.0_x" → 8
+    return Number.isFinite(major) && major > 0 ? major : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Scan common install locations for system Java installations. */
+function scanInstalledJavas() {
+  const roots = [];
+  const pushRoot = (p) => { if (p && fs.existsSync(p)) roots.push(p); };
+  if (process.platform === 'win32') {
+    for (const envKey of ['ProgramFiles', 'ProgramFiles(x86)', 'LocalAppData']) {
+      const base = process.env[envKey];
+      if (!base) continue;
+      for (const sub of ['Java', 'Eclipse Adoptium', 'AdoptOpenJDK', 'Microsoft', 'Zulu', 'Amazon Corretto', 'BellSoft', 'Semeru']) {
+        pushRoot(path.join(base, sub));
+      }
+      if (envKey === 'LocalAppData') pushRoot(path.join(base, 'Programs'));
+    }
+  } else if (process.platform === 'darwin') {
+    pushRoot('/Library/Java/JavaVirtualMachines');
+  } else {
+    pushRoot('/usr/lib/jvm');
+  }
+
+  const found = [];
+  for (const root of roots) {
+    let entries = [];
+    try { entries = fs.readdirSync(root).filter((n) => !n.startsWith('.')); } catch (e) { continue; }
+    for (const entry of entries) {
+      const full = path.join(root, entry);
+      let st = null;
+      try { st = fs.statSync(full); } catch (e) { continue; }
+      if (!st.isDirectory()) continue;
+      const candidates = [javaExeIn(full)];
+      if (process.platform === 'darwin') candidates.push(path.join(full, 'Contents', 'Home', 'bin', 'java'));
+      let hit = candidates.find((c) => fs.existsSync(c));
+      if (hit) { found.push(hit); continue; }
+      // One nesting level deeper (e.g. …\Microsoft\jdk-21.0.11.10-hotspot, …\Programs\Eclipse Adoptium\jdk-25)
+      let inner = [];
+      try { inner = fs.readdirSync(full).filter((n) => !n.startsWith('.')); } catch (e2) { continue; }
+      for (const innerName of inner) {
+        const full2 = path.join(full, innerName);
+        let st2 = null;
+        try { st2 = fs.statSync(full2); } catch (e3) { continue; }
+        if (!st2.isDirectory()) continue;
+        const exe2 = javaExeIn(full2);
+        if (fs.existsSync(exe2)) { found.push(exe2); break; }
+      }
+    }
+  }
+  return found;
+}
+
+async function downloadFileWithProgress(url, destPath, log, label) {
+  const res = await nativeFetch(url, { redirect: 'follow' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const total = Number(res.headers.get('content-length')) || 0;
+  let received = 0;
+  let lastLogged = 0;
+  const { Readable } = require('stream');
+  const nodeStream = Readable.fromWeb(res.body);
+  await new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(destPath);
+    nodeStream.on('data', (chunk) => {
+      received += chunk.length;
+      const mb = Math.floor(received / (1024 * 1024));
+      if (total) {
+        const pct = Math.floor((received / total) * 100);
+        if (pct >= lastLogged + 10) { lastLogged = pct; log('info', `${label} — ${pct}%`); }
+      } else if (mb >= lastLogged + 8) {
+        lastLogged = mb;
+        log('info', `${label} — ${mb} MB`);
+      }
+    });
+    nodeStream.on('error', reject);
+    out.on('error', reject);
+    out.on('finish', resolve);
+    nodeStream.pipe(out);
+  });
+}
+
+/** Download + extract an Adoptium JRE for the given major into JAVA_RUNTIMES_DIR (Windows builds). */
+async function provisionJavaForMajor(major, log) {
+  const targetDir = path.join(JAVA_RUNTIMES_DIR, `jdk-${major}`);
+  const exe = path.join(targetDir, 'bin', 'java.exe');
+  if (fs.existsSync(exe)) return exe;
+
+  const osArch = process.arch === 'arm64' ? 'aarch64' : 'x64';
+  const url = `https://api.adoptium.net/v3/binary/latest/${major}/ga/windows/${osArch}/jre/hotspot/normal/eclipse?project=jdk`;
+  const tmpZip = path.join(JAVA_RUNTIMES_DIR, `jdk-${major}.zip.tmp`);
+  const extractDir = path.join(JAVA_RUNTIMES_DIR, `jdk-${major}.extract`);
+  fs.ensureDirSync(JAVA_RUNTIMES_DIR);
+  try { fs.removeSync(extractDir); } catch (e) {}
+  try { fs.removeSync(tmpZip); } catch (e2) {}
+  fs.ensureDirSync(extractDir);
+  try {
+    await downloadFileWithProgress(url, tmpZip, log, `[Zenon] Downloading Java ${major} runtime`);
+    log('info', `[Zenon] Extracting Java ${major} runtime…`);
+    const zip = new AdmZip(tmpZip);
+    zip.extractAllTo(extractDir, true);
+    const entries = fs.readdirSync(extractDir);
+    let root = extractDir;
+    if (entries.length === 1 && fs.statSync(path.join(extractDir, entries[0])).isDirectory()) {
+      root = path.join(extractDir, entries[0]);
+    }
+    fs.moveSync(root, targetDir, { overwrite: true });
+  } finally {
+    try { fs.removeSync(extractDir); } catch (e) {}
+    try { fs.removeSync(tmpZip); } catch (e2) {}
+  }
+  if (!fs.existsSync(exe)) throw new Error(`Downloaded Java ${major} runtime is missing bin/java.exe`);
+  return exe;
+}
+
+/**
+ * Pick a Java executable that satisfies the MC version's requirement:
+ * user-configured paths → previously provisioned runtimes → system installs → auto-download.
+ */
+async function resolveJavaExecutable(requiredMajor, mcVersion, settings, instance, log) {
+  const candidates = [];
+  const customOn =
+    instance.javaCustomEnabled === true ||
+    (instance.javaCustomEnabled == null && !!String(instance.javaPathOverride || '').trim());
+  const customPath = customOn ? String(instance.javaPathOverride || '').trim() : '';
+  const settingsPath = String(settings.javaPath || '').trim();
+  if (customPath) candidates.push({ p: customPath, label: 'Instance Java override' });
+  if (settingsPath && settingsPath.toLowerCase() !== 'java') candidates.push({ p: settingsPath, label: 'Settings Java path' });
+  candidates.push({ p: settingsPath || 'java', label: 'System Java (PATH)' });
+
+  for (const c of candidates) {
+    const major = getJavaMajor(c.p);
+    if (major == null) continue;
+    if (major >= requiredMajor) return { javaPath: c.p, major, source: c.label };
+    log('info', `[Zenon] ${c.label} is Java ${major}, but Minecraft ${mcVersion} needs Java ${requiredMajor}+ — looking for a compatible runtime…`);
+  }
+
+  // Previously downloaded runtimes
+  try {
+    const dirs = fs.readdirSync(JAVA_RUNTIMES_DIR).filter((d) => /^jdk-\d+$/.test(d));
+    for (const d of dirs) {
+      const exe = javaExeIn(path.join(JAVA_RUNTIMES_DIR, d));
+      if (!fs.existsSync(exe)) continue;
+      const major = getJavaMajor(exe);
+      if (major != null && major >= requiredMajor) return { javaPath: exe, major, source: 'Zenon-managed runtime' };
+    }
+  } catch (e) {}
+
+  // System-wide installs — prefer the closest major ≥ required
+  const scanned = scanInstalledJavas()
+    .map((exe) => ({ exe, major: getJavaMajor(exe) }))
+    .filter((x) => x.major != null && x.major >= requiredMajor)
+    .sort((x, y) => x.major - y.major);
+  if (scanned.length) {
+    const pick = scanned[0];
+    return { javaPath: pick.exe, major: pick.major, source: 'installed Java' };
+  }
+
+  // Nothing compatible — download the required runtime (Windows; the app's build target).
+  if (process.platform === 'win32') {
+    log('info', `[Zenon] No compatible Java found on this PC — downloading Java ${requiredMajor} (one-time, ~50 MB)…`);
+    const exe = await provisionJavaForMajor(requiredMajor, log);
+    return { javaPath: exe, major: getJavaMajor(exe) || requiredMajor, source: 'downloaded runtime' };
+  }
+
+  throw new Error(`Minecraft ${mcVersion} requires Java ${requiredMajor}+. Install it from https://adoptium.net (or set the Java path in Settings).`);
+}
+
 // Game launching — fresh Client per launch (listeners + async launch must be awaited).
 let __runningGame = null; // { instanceId, proc }
 async function launchGame(instanceId) {
+  const sendLog = sendLaunchLog;
   const configPath = path.join(INSTANCES_DIR, instanceId, 'instance.json');
   if (!fs.existsSync(configPath)) throw new Error('Instance not found');
 
@@ -2359,15 +2873,26 @@ async function launchGame(instanceId) {
     Math.max(8, parseInt(String(settings.mcDownloadSockets || '40'), 10) || 40)
   );
 
-  const customJavaOn =
-    instance.javaCustomEnabled === true ||
-    (instance.javaCustomEnabled == null &&
-      instance.javaPathOverride &&
-      String(instance.javaPathOverride).trim());
-  const javaPath =
-    customJavaOn && String(instance.javaPathOverride || '').trim()
-      ? String(instance.javaPathOverride).trim()
-      : settings.javaPath || 'java';
+  // Resolve the right Java for this Minecraft version (26.x needs Java 25, 1.20.5+ needs 21, 1.18+ needs 17…).
+  let requiredMajor = null;
+  try {
+    const vj = await getVersionJson(instance.version, manifest);
+    requiredMajor = vj?.javaVersion?.majorVersion ? Number(vj.javaVersion.majorVersion) : null;
+  } catch (e) {}
+  if (!requiredMajor || !Number.isFinite(requiredMajor)) {
+    requiredMajor = guessRequiredJavaMajor(instance.version);
+  }
+  sendLog('info', `[Zenon] Minecraft ${instance.version} requires Java ${requiredMajor}+`);
+
+  let javaPath;
+  try {
+    const javaRes = await resolveJavaExecutable(requiredMajor, instance.version, settings, instance, sendLog);
+    javaPath = javaRes.javaPath;
+    sendLog('info', `[Zenon] Using Java ${javaRes.major} (${javaRes.source})`);
+  } catch (e) {
+    sendLog('error', `[Zenon] ${e.message}`);
+    return { success: false, error: e.message };
+  }
 
   const customMemOn =
     instance.memoryCustomEnabled === true ||
@@ -2454,13 +2979,6 @@ async function launchGame(instanceId) {
   }
 
   const launcher = new Client();
-  const sendLog = (type, message) => {
-    try {
-      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
-        mainWindow.webContents.send('launch-log', { type, message });
-      }
-    } catch (e) {}
-  };
 
   function shouldRunInstanceHook(cmdStr) {
     const cmd = String(cmdStr || '').trim();
@@ -2536,6 +3054,10 @@ async function launchGame(instanceId) {
 
 // IPC Handlers
 ipcMain.handle('get-settings', () => loadSettings());
+ipcMain.handle('get-system-info', () => ({
+  totalMemMb: TOTAL_RAM_MB,
+  recommendedMaxMb: recommendedMaxRamMb()
+}));
 ipcMain.handle('save-settings', (_, settings) => { saveSettings(settings); return true; });
 
 // Auth IPC
@@ -2633,7 +3155,7 @@ ipcMain.handle('instance-clear-icon', async (_, instanceId) => {
       const d = instanceIconDir(id);
       if (fs.existsSync(d)) {
         for (const n of fs.readdirSync(d)) {
-          if (/^icon\\.(png|jpg|jpeg|webp)$/i.test(n)) fs.removeSync(path.join(d, n));
+          if (/^icon\.(png|jpg|jpeg|webp)$/i.test(n)) fs.removeSync(path.join(d, n));
         }
       }
     } catch (e2) {}
@@ -2952,6 +3474,63 @@ ipcMain.on('window-maximize', () => {
 });
 ipcMain.on('window-close', () => mainWindow?.close());
 
+// ===== Auto-updater (GitHub Releases, packaged builds only) =====
+async function wireAutoUpdater() {
+  if (!app.isPackaged) return;
+  try {
+    const { autoUpdater } = require('electron-updater');
+    autoUpdater.autoDownload = true;
+
+    autoUpdater.on('update-available', (info) => {
+      sendToRenderer('update:event', { event: 'available', info });
+    });
+    autoUpdater.on('update-not-available', (info) => {
+      sendToRenderer('update:event', { event: 'none', info });
+    });
+    autoUpdater.on('download-progress', (p) => {
+      sendToRenderer('update:event', { event: 'progress', progress: p });
+    });
+    autoUpdater.on('update-downloaded', (info) => {
+      sendToRenderer('update:event', { event: 'downloaded', info });
+    });
+    autoUpdater.on('error', (err) => {
+      sendToRenderer('update:event', { event: 'error', message: err?.message || String(err) });
+    });
+
+    // Check for updates after 2.5s (gives UI time to render). Respects the user's setting.
+    setTimeout(() => {
+      try {
+        if (loadSettings().autoCheckUpdates === false) return;
+        autoUpdater.checkForUpdates();
+      } catch (e) { console.error('[zenon] checkForUpdates failed:', e); }
+    }, 2500);
+  } catch (e) {
+    console.error('[zenon] auto-updater setup failed:', e);
+  }
+}
+
+ipcMain.handle('update:check', async () => {
+  if (!app.isPackaged) return { success: false, error: 'Updates only work in packaged builds.' };
+  try {
+    const { autoUpdater } = require('electron-updater');
+    const res = await autoUpdater.checkForUpdates();
+    return { success: true, result: res || null };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('update:install', async () => {
+  if (!app.isPackaged) return { success: false, error: 'Updates only work in packaged builds.' };
+  setImmediate(() => {
+    try {
+      const { autoUpdater } = require('electron-updater');
+      autoUpdater.quitAndInstall(false, true);
+    } catch (e) {}
+  });
+  return { success: true };
+});
+
 process.on('uncaughtException', (err) => {
   console.error('[zenon] uncaughtException:', err);
 });
@@ -2962,6 +3541,7 @@ process.on('unhandledRejection', (reason) => {
 app.whenReady().then(() => {
   console.log('[zenon] app ready, opening window');
   createWindow();
+  wireAutoUpdater();
 });
 app.on('before-quit', () => {
   for (const id of [...SERVER_RUNTIME.keys()]) {

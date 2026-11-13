@@ -547,7 +547,8 @@ async function openHostServerInstallModal(cfg, kind, hit) {
         author: hit.author || null
       });
       if (result?.success) {
-        showToast(`${hit.title} installed`, 'success');
+        showToast(describeDependencyInstall(hit.title, result), 'success', 6000);
+        showDependencyFailures(result);
         closeModal('modal-mod-download');
         await refreshHostServerContentPanel();
       } else {
@@ -769,8 +770,19 @@ async function renderHostServer() {
     <div class="page page-host-server">
       <div class="discovery-head glow-hero">
         <div>
+          <span class="page-kicker">Dedicated hosting</span>
           <h1 class="page-title">Host a server</h1>
           <p class="page-subtitle">Create a dedicated server folder: vanilla Mojang jar, Paper, Forge (installer), or Fabric server jar. Edit <code class="id-code">eula.txt</code> to <code class="id-code">eula=true</code> before starting from here.</p>
+        </div>
+      </div>
+
+      <div class="lan-notice" role="note">
+        <span class="lan-notice-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </span>
+        <div class="lan-notice-text">
+          <strong>LAN only — these are not public internet servers.</strong>
+          <p>Servers hosted through Zenon run on this computer and behave like LAN games: only devices on the same home internet connection (your household network) can join. Friends connecting from outside your home cannot join directly — that would require port forwarding on your router or a tunneling service such as playit.gg.</p>
         </div>
       </div>
 

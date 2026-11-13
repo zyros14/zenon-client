@@ -3,29 +3,132 @@ async function renderHome() {
   const content = document.getElementById('main-content');
   const instances = State.instances;
   const totalMods = await getTotalMods(instances);
+  const sel = State.selectedInstance;
+
+  const loaderTag = (loader) =>
+    loader === 'fabric'
+      ? '<span class="tag tag-fabric">Fabric</span>'
+      : loader === 'forge'
+        ? '<span class="tag tag-forge">Forge</span>'
+        : loader === 'vanilla'
+          ? '<span class="tag tag-vanilla">Vanilla</span>'
+          : `<span class="tag tag-version">${escapeHtml(loader)}</span>`;
+
+  const sidePanel = sel
+    ? `
+    <div class="side-instance-card">
+      <div class="sic-head">
+        <div class="ic-icon">${getInstanceIcon(sel)}</div>
+        <div style="min-width:0">
+          <div class="sic-name">${escapeHtml(sel.name)}</div>
+          <div class="sic-tags">
+            <span class="tag tag-version">${escapeHtml(sel.version || '')}</span>
+            ${loaderTag(sel.loader)}
+          </div>
+        </div>
+      </div>
+      <button class="btn btn-primary sic-play" id="hero-launch-btn-side">
+        <svg viewBox="0 0 24 24" fill="currentColor" style="width:16px;height:16px"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Play now
+      </button>
+      <button class="btn btn-ghost" id="hero-open-library" style="width:100%;justify-content:center">
+        Open library <span class="arrow" aria-hidden="true">&#8599;</span>
+      </button>
+    </div>`
+    : `
+    <div class="side-instance-card">
+      <div class="sic-empty">
+        <strong>No instance selected</strong>
+        Create an instance to start playing — it takes about ten seconds.
+      </div>
+      <button class="btn btn-primary sic-play" id="hero-new-instance-side">
+        New instance <span class="arrow" aria-hidden="true">&#8599;</span>
+      </button>
+    </div>`;
+
+  const emptyState = instances.length === 0
+    ? `
+    <div class="reveal">
+      <div class="section-kicker">Getting started</div>
+      <div class="process-list">
+        <div class="process-item">
+          <span class="process-num">1</span>
+          <div>
+            <div class="process-title">Create an instance</div>
+            <p class="process-desc">Pick a Minecraft version and a loader — Vanilla, Fabric, or Forge. Everything is scoped to its own folder.</p>
+          </div>
+        </div>
+        <div class="process-item">
+          <span class="process-num">2</span>
+          <div>
+            <div class="process-title">Make it yours</div>
+            <p class="process-desc">Browse Modrinth for mods, shaders and packs. Required dependencies install themselves.</p>
+          </div>
+        </div>
+        <div class="process-item">
+          <span class="process-num">3</span>
+          <div>
+            <div class="process-title">Press play</div>
+            <p class="process-desc">Java, assets and libraries are handled automatically. The launch console shows every step.</p>
+          </div>
+        </div>
+      </div>
+    </div>`
+    : `
+    <div class="recent-section reveal">
+      <h2>Recent instances</h2>
+      <div class="recent-instances" id="recent-instances-grid">
+        ${instances.slice(0, 6).map((inst) => `
+          <div class="recent-instance-card" data-id="${inst.id}">
+            <div class="ric-icon">${getInstanceIcon(inst)}</div>
+            <div class="ric-name">${escapeHtml(inst.name)}</div>
+            <div class="ric-meta">
+              <span class="tag tag-version">${escapeHtml(inst.version)}</span>
+              ${loaderTag(inst.loader)}
+            </div>
+            <div class="ric-meta" style="margin-top:4px">Played ${formatDate(inst.lastPlayed)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>`;
 
   content.innerHTML = `
     <div class="page">
-      <div class="home-hero">
-        <h1>ZENON CLIENT</h1>
-        <p>Your modern Minecraft launcher. Manage instances, install mods, and launch your game — all in one place.</p>
-        <div class="hero-actions">
-          <button class="btn btn-primary btn-lg" id="hero-launch-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px;stroke:white">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            ${State.selectedInstance ? `Launch ${State.selectedInstance.name}` : 'Select an Instance'}
-          </button>
-          <button class="btn btn-ghost btn-lg" id="hero-new-instance-btn">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            New Instance
-          </button>
+      <header class="home-hero">
+        <div class="hero-layout">
+          <div class="hero-copy">
+            <span class="eyebrow">Modern Minecraft launcher</span>
+            <h1>Less setup.<br><span class="gradient-text">More Minecraft.</span></h1>
+            <p>Instances, mods, shaders and servers — managed in one clean place and launched in a single click.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary btn-lg" id="hero-launch-btn">
+                ${sel ? `Play ${escapeHtml(sel.name)}` : 'Pick an instance'} <span class="arrow" aria-hidden="true">&#8599;</span>
+              </button>
+              <button class="btn btn-ghost btn-lg" id="hero-new-instance-btn">
+                New instance <span class="arrow" aria-hidden="true">&#8599;</span>
+              </button>
+            </div>
+            <div class="hero-trust">
+              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Fabric &amp; Forge ready</span>
+              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Modrinth built in</span>
+              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Java handled for you</span>
+            </div>
+          </div>
+          <div class="hero-side">
+            ${sidePanel}
+          </div>
+        </div>
+      </header>
+
+      <div class="marquee reveal" aria-hidden="true">
+        <div class="marquee-track">
+          ${['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'Offline mode', 'Live launch console']
+            .concat(['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'Offline mode', 'Live launch console'])
+            .map((t) => `<span class="marquee-item">${t}</span>`).join('')}
         </div>
       </div>
 
-      <div class="stats-row">
+      <div class="stats-row reveal">
         <div class="stat-card">
           <div class="stat-icon stat-icon-blue">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -55,52 +158,32 @@ async function renderHome() {
         </div>
       </div>
 
-      <div class="recent-section">
-        <h2>Recent Instances</h2>
-        <div class="recent-instances" id="recent-instances-grid">
-          ${instances.length === 0
-            ? `<div style="grid-column:1/-1"><div class="empty-state">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                <h3>No instances yet</h3>
-                <p>Create your first instance to get started</p>
-              </div></div>`
-            : instances.slice(0, 6).map(inst => `
-              <div class="recent-instance-card" data-id="${inst.id}">
-                <div class="ric-icon">${getInstanceIcon(inst)}</div>
-                <div class="ric-name">${escapeHtml(inst.name)}</div>
-                <div class="ric-meta">
-                  <span class="tag tag-version">${inst.version}</span>
-                  ${
-                    inst.loader === 'fabric'
-                      ? '<span class="tag tag-fabric">Fabric</span>'
-                      : inst.loader === 'forge'
-                        ? '<span class="tag tag-forge">Forge</span>'
-                        : inst.loader !== 'vanilla'
-                          ? `<span class="tag tag-version">${escapeHtml(inst.loader)}</span>`
-                          : ''
-                  }
-                </div>
-                <div class="ric-meta" style="margin-top:4px">Played ${formatDate(inst.lastPlayed)}</div>
-              </div>
-            `).join('')
-          }
-        </div>
-      </div>
+      ${emptyState}
     </div>
   `;
 
   // Events
-  document.getElementById('hero-launch-btn').addEventListener('click', () => {
+  const launchHandler = () => {
     if (State.selectedInstance) {
       launchInstance(State.selectedInstance.id);
     } else {
       navigateTo('library', { force: true });
       showToast('Select an instance first', 'info');
     }
+  };
+  document.getElementById('hero-launch-btn')?.addEventListener('click', launchHandler);
+  document.getElementById('hero-launch-btn-side')?.addEventListener('click', launchHandler);
+
+  document.getElementById('hero-new-instance-btn')?.addEventListener('click', () => {
+    openCreateInstanceModal();
+  });
+  document.getElementById('hero-new-instance-side')?.addEventListener('click', () => {
+    openCreateInstanceModal();
   });
 
-  document.getElementById('hero-new-instance-btn').addEventListener('click', () => {
-    openCreateInstanceModal();
+  document.getElementById('hero-open-library')?.addEventListener('click', () => {
+    State.libraryPane = 'content';
+    navigateTo('library', { force: true });
   });
 
   document.querySelectorAll('.recent-instance-card').forEach(card => {
@@ -128,7 +211,8 @@ async function getTotalMods(instances) {
 }
 
 function escapeHtml(str) {
+  if (!str) return '';
   const div = document.createElement('div');
-  div.appendChild(document.createTextNode(str));
+  div.appendChild(document.createTextNode(String(str)));
   return div.innerHTML;
 }

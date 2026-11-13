@@ -144,6 +144,7 @@ async function renderDiscovery() {
     <div class="page page-discovery">
       <div class="discovery-head glow-hero">
         <div>
+          <span class="page-kicker">Modrinth</span>
           <h1 class="page-title discovery-title">Discovery</h1>
           <p class="page-subtitle discovery-sub">Search Modrinth for mods, modpacks, shaders, resource packs, and data packs.</p>
           <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance (or a modpack creates a new one).</p>

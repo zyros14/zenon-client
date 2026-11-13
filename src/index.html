@@ -3,20 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' file: data: blob: https:; connect-src 'self' https:" />
   <title>Zenon Client</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Michroma&family=Rajdhani:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Michroma&family=Space+Grotesk:wght@500;600;700&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/main.css" />
   <link rel="stylesheet" href="css/components.css" />
+  <script>document.documentElement.classList.add('js');</script>
 </head>
 <body>
   <!-- Splash (fades into app) -->
   <div id="splash-screen" class="splash-screen" aria-label="Zenon Client loading">
     <div class="splash-inner">
       <img class="splash-logo" src="assets/zenon-logo.png" alt="" draggable="false" />
-      <div class="splash-title">ZENON CLIENT</div>
-      <div class="splash-sub">Loading…</div>
-      <div class="splash-bar" aria-hidden="true"><div class="splash-bar-fill"></div></div>
+      <div class="splash-title">ZENON is loading</div>
+      <div class="splash-spinner" aria-hidden="true"></div>
+    </div>
+  </div>
+
+  <!-- Update reminder banner (shows when update is downloaded) -->
+  <div class="update-reminder" id="update-reminder" style="display:none">
+    <div class="update-reminder-text" id="update-reminder-text">Update ready</div>
+    <div class="update-reminder-actions">
+      <button type="button" class="btn btn-primary btn-sm" id="update-reminder-install">Restart &amp; install</button>
+      <button type="button" class="btn btn-ghost btn-sm" id="update-reminder-dismiss">Later</button>
     </div>
   </div>
 

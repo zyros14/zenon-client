@@ -43,3 +43,20 @@ function formatPlayTime(seconds) {
   if (hours > 0) return `${hours}h ${minutes}m`;
   return `${minutes}m`;
 }
+
+/** Toast text for an install result, including auto-installed Modrinth dependencies. */
+function describeDependencyInstall(title, result) {
+  const deps = result && result.deps;
+  if (!deps || !deps.installed || !deps.installed.length) return `${title} installed`;
+  const n = deps.installed.length;
+  const names = deps.installed.slice(0, 3).join(', ') + (n > 3 ? ` +${n - 3} more` : '');
+  return `${title} installed + ${n} required dependenc${n === 1 ? 'y' : 'ies'}: ${names}`;
+}
+
+function showDependencyFailures(result) {
+  const deps = result && result.deps;
+  if (deps && deps.failed && deps.failed.length) {
+    const names = deps.failed.slice(0, 3).join(', ') + (deps.failed.length > 3 ? ` +${deps.failed.length - 3} more` : '');
+    showToast(`Required dependencies failed to install: ${names}`, 'error', 6500);
+  }
+}

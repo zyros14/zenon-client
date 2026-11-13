@@ -29,6 +29,11 @@ contextBridge.exposeInMainWorld('zenon', {
     return () => ipcRenderer.removeListener('auth:log', handler);
   },
 
+  // Updates (packaged builds only)
+  updateCheck: () => ipcRenderer.invoke('update:check'),
+  updateInstall: () => ipcRenderer.invoke('update:install'),
+  onUpdateEvent: (fn) => { ipcRenderer.on('update:event', fn); return () => ipcRenderer.removeListener('update:event', fn); },
+
   // Window controls
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
@@ -38,6 +43,7 @@ contextBridge.exposeInMainWorld('zenon', {
   // Settings
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
+  getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
 
   // Instances
   getInstances: () => ipcRenderer.invoke('get-instances'),
