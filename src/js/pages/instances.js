@@ -1,4 +1,4 @@
-// ===== Instances Page =====
+﻿// ===== Instances Page =====
 /** After `State.instances` is replaced from disk, keep `State.selectedInstance` on the same row (fixes stale names in the sidebar). */
 function syncSelectedInstanceWithList() {
   if (!State.selectedInstance) return;
@@ -25,7 +25,7 @@ async function renderInstances() {
           <div>
             <span class="page-kicker">Manage</span>
             <h1 class="page-title">Instances</h1>
-            <p class="page-subtitle">${State.instances.length} instance${State.instances.length !== 1 ? 's' : ''} · click a card to open its library</p>
+            <p class="page-subtitle">${State.instances.length} instance${State.instances.length !== 1 ? 's' : ''} Â· click a card to open its library</p>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
             <button class="btn btn-ghost" id="import-instance-btn">Import</button>
@@ -122,7 +122,7 @@ function renderInstanceCard(inst) {
               <span class="tag tag-version">${escapeHtml(inst.version)}</span>
               ${loaderTag}
             </div>
-            <div class="ic-hint">Library — content, files, worlds, logs</div>
+            <div class="ic-hint">Library â€” content, files, worlds, logs</div>
           </div>
         </div>
         <div class="ic-actions">
@@ -446,15 +446,15 @@ async function openEditInstanceModal(id) {
         ? 'Forge'
         : inst.loader === 'vanilla'
           ? 'Vanilla'
-          : String(inst.loader || '—');
+          : String(inst.loader || 'â€”');
   document.getElementById('eim-install-platform').textContent = platform;
-  document.getElementById('eim-install-gamever').textContent = inst.version || '—';
+  document.getElementById('eim-install-gamever').textContent = inst.version || 'â€”';
   const loaderVer =
     inst.loader === 'fabric' && inst.loaderVersion
       ? String(inst.loaderVersion)
       : inst.loader === 'forge' && inst.loaderVersion
         ? String(inst.loaderVersion)
-        : '—';
+        : 'â€”';
   document.getElementById('eim-install-loaderv').textContent = loaderVer;
   document.getElementById('eim-folder-path').value = inst.dir || '';
 
@@ -471,7 +471,7 @@ async function openEditInstanceModal(id) {
 
   document.getElementById('eim-mem-custom').checked = !!inst.memoryCustomEnabled;
 
-  // Slider and input max out at the detected system RAM — users can allocate everything they have.
+  // Slider and input max out at the detected system RAM â€” users can allocate everything they have.
   const sys = await ensureSystemRamInfo();
   const totalMemMb = Math.max(1024, Math.floor((sys?.totalMemMb || 32768) / 1024) * 1024);
   const sliderEl = document.getElementById('eim-ram-slider');
@@ -556,7 +556,7 @@ async function openEditInstanceModal(id) {
   document.getElementById('edit-inst-save-btn').onclick = async () => {
     const instanceId = document.getElementById('edit-inst-id')?.value?.trim();
     if (!instanceId) {
-      showToast('Instance id missing — close and reopen the editor.', 'error');
+      showToast('Instance id missing â€” close and reopen the editor.', 'error');
       return;
     }
 
@@ -602,7 +602,7 @@ async function openEditInstanceModal(id) {
     try {
       const updated = await window.zenon.updateInstance(instanceId, updates);
       if (!updated) {
-        showToast('Could not save — instance folder or id may be invalid.', 'error');
+        showToast('Could not save â€” instance folder or id may be invalid.', 'error');
         return;
       }
       State.instances = await window.zenon.getInstances();
@@ -657,7 +657,7 @@ async function openCreateInstanceModal() {
       : State.mcVersions.filter((v) => (v && v.type ? v.type === 'release' : true));
 
     mcSelect.innerHTML = filtered.map((v) => {
-      const label = v.type === 'release' ? v.id : `${v.id} · ${v.type}`;
+      const label = v.type === 'release' ? v.id : `${v.id} Â· ${v.type}`;
       return `<option value="${String(v.id).replace(/"/g, '&quot;')}" data-version-type="${String(v.type).replace(/"/g, '&quot;')}">${escapeHtml(label)}</option>`;
     }).join('');
 
@@ -676,6 +676,8 @@ async function openCreateInstanceModal() {
   renderMcVersionOptions();
 
   loaderSelect.value = 'vanilla';
+  fabricGroup.style.display = 'none';
+  forgeGroup.style.display = 'none';
 
   const syncLoaderSubmenus = async () => {
     const mc = mcSelect.value;
@@ -690,7 +692,7 @@ async function openCreateInstanceModal() {
     } else if (loaderSelect.value === 'forge') {
       fabricGroup.style.display = 'none';
       forgeGroup.style.display = 'block';
-      forgeSelect.innerHTML = '<option value="">Loading Forge versions…</option>';
+      forgeSelect.innerHTML = '<option value="">Loading Forge versionsâ€¦</option>';
       const rows = (await window.zenon.getForgeVersions(mc)) || [];
       const opts = rows.map((r) => {
         const val = String(r.full || '').replace(/"/g, '&quot;');
@@ -698,10 +700,10 @@ async function openCreateInstanceModal() {
         return `<option value="${val}">${lab}</option>`;
       });
       forgeSelect.innerHTML =
-        '<option value="">Select Forge version…</option>' +
+        '<option value="">Select Forge versionâ€¦</option>' +
         (opts.length
           ? opts.join('')
-          : '<option value="" disabled>No Forge builds for this Minecraft version — pick another MC version or a release (not pre-release).</option>');
+          : '<option value="" disabled>No Forge builds for this Minecraft version â€” pick another MC version or a release (not pre-release).</option>');
     } else {
       fabricGroup.style.display = 'none';
       forgeGroup.style.display = 'none';
@@ -743,25 +745,33 @@ async function openCreateInstanceModal() {
     btn.disabled = true;
     btn.textContent = 'Creating...';
 
-    const inst = await window.zenon.createInstance({
-      name,
-      version,
-      versionType,
-      loader,
-      loaderVersion: loader === 'fabric' ? fabricVersion : loader === 'forge' ? forgeFull : null
-    });
+    try {
+      const inst = await window.zenon.createInstance({
+        name,
+        version,
+        versionType,
+        loader,
+        loaderVersion: loader === 'fabric' ? fabricVersion : loader === 'forge' ? forgeFull : null
+      });
+      if (!inst) throw new Error('Could not create instance');
 
-    State.instances = await window.zenon.getInstances();
-    State.selectedInstance = inst;
-    syncSelectedInstanceWithList();
-    updateSidebarBadge();
+      State.instances = await window.zenon.getInstances();
+      State.selectedInstance = inst;
+      syncSelectedInstanceWithList();
+      updateSidebarBadge();
 
-    closeModal('modal-create-instance');
-    document.getElementById('inst-name').value = '';
-    showToast(`Instance "${name}" created!`, 'success');
-    // After creating an instance, take user straight to Library.
-    State.libraryPane = 'content';
-    navigateTo('library', { force: true });
+      closeModal('modal-create-instance');
+      document.getElementById('inst-name').value = '';
+      showToast(`Instance "${name}" created!`, 'success');
+      // After creating an instance, take user straight to Library.
+      State.libraryPane = 'content';
+      navigateTo('library', { force: true });
+    } catch (e) {
+      showToast(`Create failed: ${e?.message || e}`, 'error', 5000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create Instance';
+    }
   };
 }
 
@@ -769,8 +779,14 @@ async function openCreateInstanceModal() {
 async function confirmDeleteInstance(id) {
   const inst = State.instances.find(i => i.id === id);
   if (!inst) return;
+  const currentPage = State.currentPage;
 
-  if (!confirm(`Delete "${inst.name}"? This cannot be undone.`)) return;
+  const ok = await showConfirm({
+    title: 'Delete instance',
+    message: `This will permanently delete "${inst.name}" from your device, including worlds, mods and settings. This cannot be undone.`,
+    confirmLabel: 'Delete instance'
+  });
+  if (!ok) return;
 
   await window.zenon.deleteInstance(id);
   State.instances = await window.zenon.getInstances();
@@ -781,9 +797,14 @@ async function confirmDeleteInstance(id) {
   }
 
   showToast(`Deleted "${inst.name}"`, 'info');
-  // After deleting an instance (often a modpack instance), return user to Library.
   State.libraryPane = 'content';
-  navigateTo('library', { force: true });
+  // Stay on the page the user is managing from - refresh it in place instead
+  // of yanking them to Library.
+  if (currentPage === 'instances') {
+    await renderInstances();
+  } else if (currentPage === 'library') {
+    await navigateTo('library', { force: true });
+  }
 }
 
 // ===== Launch Game =====
@@ -819,7 +840,7 @@ async function launchInstance(id) {
     setConsoleStatus('Running', true);
     State.runningInstanceId = id;
     showToast(`${inst.name} is running!`, 'success');
-    // "Close on Launch" setting — the game process keeps running after the launcher exits.
+    // "Close on Launch" setting â€” the game process keeps running after the launcher exits.
     try {
       const s = await window.zenon.getSettings();
       if (s?.closeOnLaunch) window.zenon.close();

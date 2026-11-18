@@ -221,22 +221,6 @@ body {
   margin-bottom: 18px;
 }
 
-.auth-offline-box {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px dashed var(--border-light);
-}
-
-.auth-offline-box .form-input {
-  margin-top: 8px;
-}
-
-.auth-offline-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 10px;
-}
-
 .auth-signin-hint {
   color: var(--text-secondary);
   font-size: 13px;
@@ -1019,13 +1003,69 @@ body {
   box-shadow: var(--input-inset), 0 0 0 3px var(--accent-dim);
 }
 
+/* Proper select styling: gradient surface, accent chevron, animated focus/hover */
 .form-select {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238b95ae' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 16px;
-  padding-right: 36px;
+  background-color: var(--bg-input);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.045) 0%, rgba(255, 255, 255, 0) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat, no-repeat;
+  background-position: 0 0, right 13px center;
+  background-size: cover, 17px;
+  padding-right: 42px;
   cursor: pointer;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  transition: border-color 0.22s var(--anim-smooth),
+              box-shadow 0.22s var(--anim-smooth),
+              background-color 0.22s var(--anim-smooth),
+              transform 0.18s var(--anim-smooth);
+}
+
+.form-select:hover {
+  border-color: var(--border-light);
+  background-color: color-mix(in srgb, var(--bg-hover) 70%, var(--bg-input));
+  box-shadow: var(--input-inset), 0 4px 16px rgba(0, 0, 0, 0.4),
+              inset 0 0 0 1px color-mix(in srgb, var(--accent) 14%, transparent);
+  transform: translateY(-1px);
+}
+
+.form-select:focus {
+  border-color: var(--accent);
+  background-color: var(--bg-input);
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.055) 0%, rgba(255, 255, 255, 0) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23c4b5fd' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath transform='rotate(180 12 12)' d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  box-shadow: var(--input-inset),
+              0 0 0 3px var(--accent-dim),
+              0 0 26px color-mix(in srgb, var(--accent) 25%, transparent);
+  transform: translateY(-1px);
+}
+
+.form-select:active { transform: translateY(0) scale(0.995); }
+
+/* Placeholder row ("Select Minecraft version…") rendered muted until chosen */
+.form-select:has(option[value=""]:checked) { color: var(--text-muted); }
+
+/* Dark native option list where the platform honors it */
+.form-select option {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-weight: 500;
+  padding: 10px 14px;
+}
+.form-select option:checked,
+.form-select option:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+
+/* Loader sub-dropdowns fade/slide in when they appear */
+#fabric-version-group,
+#forge-version-group {
+  animation: groupReveal 0.28s var(--anim-smooth);
+}
+@keyframes groupReveal {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* ===== Modal ===== */

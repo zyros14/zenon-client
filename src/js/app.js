@@ -181,8 +181,59 @@ function closeAllModals() {
   if (browseModal?.classList.contains('show') && typeof window.__onLibraryBrowseModalClose === 'function') {
     window.__onLibraryBrowseModalClose();
   }
+  // Any pending confirmation dialog counts as "cancelled"
+  resolveConfirm(false);
   document.getElementById('modal-overlay').classList.remove('show');
   document.querySelectorAll('.modal').forEach(m => m.classList.remove('show'));
+}
+
+// ===== Styled confirm dialog (replaces native confirm()) =====
+let __confirmResolve = null;
+
+/**
+ * Show a Zenon-styled confirmation dialog.
+ * @param {{ title?: string, message?: string, confirmLabel?: string, cancelLabel?: string, danger?: boolean }} [opts]
+ * @returns {Promise<boolean>} true if the user confirmed, false if cancelled
+ */
+function showConfirm(opts = {}) {
+  const {
+    title = 'Are you sure?',
+    message = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = true
+  } = opts;
+
+  return new Promise((resolve) => {
+    __confirmResolve = resolve;
+    const titleEl = document.getElementById('confirm-title');
+    const msgEl = document.getElementById('confirm-message');
+    const icon = document.getElementById('confirm-icon');
+    const cancelBtn = document.getElementById('confirm-cancel-btn');
+    const acceptBtn = document.getElementById('confirm-accept-btn');
+    if (!msgEl || !cancelBtn || !acceptBtn) { resolve(false); return; }
+
+    if (titleEl) titleEl.textContent = title;
+    msgEl.textContent = message;
+    if (icon) icon.classList.toggle('confirm-icon--warn', !danger);
+    cancelBtn.textContent = cancelLabel;
+    acceptBtn.textContent = confirmLabel;
+    acceptBtn.classList.toggle('btn-danger', !!danger);
+    acceptBtn.classList.toggle('btn-primary', !danger);
+    acceptBtn.classList.toggle('confirm-icon--warn', false);
+
+    openModal('modal-confirm');
+    // Safe default for destructive actions: focus Cancel
+    cancelBtn.focus();
+  });
+}
+
+function resolveConfirm(value) {
+  if (!__confirmResolve) return;
+  const r = __confirmResolve;
+  __confirmResolve = null;
+  closeModal('modal-confirm');
+  r(!!value);
 }
 
 // ===== Console Panel =====
@@ -346,6 +397,11 @@ async function init() {
 
   // Modal overlay close
   document.getElementById('modal-overlay').addEventListener('click', closeAllModals);
+
+  // Confirmation dialog buttons
+  document.getElementById('confirm-cancel-btn')?.addEventListener('click', () => resolveConfirm(false));
+  document.getElementById('confirm-accept-btn')?.addEventListener('click', () => resolveConfirm(true));
+  document.getElementById('confirm-close-btn')?.addEventListener('click', () => resolveConfirm(false));
 
   // Console controls
   document.getElementById('console-close-btn').addEventListener('click', closeConsole);

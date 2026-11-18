@@ -165,7 +165,13 @@ async function refreshHostServerContentPanel() {
       await refreshHostServerContentPanel();
     }
     if (act.dataset.action === 'delete') {
-      if (!confirm(`Remove ${filename.replace('.disabled', '')}?`)) return;
+      const base = filename.replace('.disabled', '');
+      const ok = await showConfirm({
+        title: 'Remove content',
+        message: `Remove "${base}"? The file will be deleted from this server.`,
+        confirmLabel: 'Remove'
+      });
+      if (!ok) return;
       await window.zenon.serverDeleteContent(hostConsoleServerId, hostConsoleKind, filename);
       showToast('Removed', 'info');
       await refreshHostServerContentPanel();
@@ -595,7 +601,13 @@ function bindHostConsolePanelControls() {
       await syncHostConsoleFromMain(hostConsoleServerId);
     } else {
       if (r?.needsEula) {
-        const ok = confirm('Minecraft requires accepting the EULA before first launch.\n\nOpen https://aka.ms/MinecraftEULA and accept it.\n\nClick OK to set eula=true for this server now.');
+        const ok = await showConfirm({
+          title: 'Minecraft EULA',
+          message: 'Minecraft requires accepting the EULA before first launch. Open https://aka.ms/MinecraftEULA and accept it, then click the button to set eula=true for this server now.',
+          confirmLabel: 'Set eula=true',
+          cancelLabel: 'Not now',
+          danger: false
+        });
         if (!ok) return;
         if (!window.zenon.serverAcceptEula) {
           showToast('Update applied — restart the app to accept EULA in-app.', 'error');
@@ -684,7 +696,11 @@ async function refreshHostServersList() {
   });
   listEl.querySelectorAll('.host-del-srv').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      if (!confirm('Delete this server folder and all files inside?')) return;
+      if (!await showConfirm({
+        title: 'Delete server',
+        message: 'Delete this server folder and all files inside? Worlds, configs and logs will be permanently removed.',
+        confirmLabel: 'Delete server'
+      })) return;
       if (hostConsoleServerId === btn.dataset.id) closeHostConsolePanel();
       const r = await window.zenon.deleteServer(btn.dataset.id);
       if (r?.success) {
@@ -704,23 +720,13 @@ async function fillHostMcVersionSelect() {
   const releases = (all || []).filter((v) => v.type === 'release');
 
   if (kind === 'paper') {
-    const paperVers = await window.zenon.getPaperMcVersions();
-    const set = new Set(paperVers || []);
-    const relIds = new Set(releases.map((v) => v.id));
-    let list = releases.filter((v) => set.has(v.id)).slice(0, 48);
-    if (!list.length) {
-      const fallback = (paperVers || []).filter((id) => relIds.has(id));
-      list = fallback.length ? releases.filter((v) => fallback.includes(v.id)).slice(0, 48) : [];
-    }
-    if (!list.length) {
-      const tail = (paperVers || []).slice(-40).reverse();
-      list = tail.map((id) => ({ id, type: 'release' }));
-    }
+    const paperVers = (await window.zenon.getPaperMcVersions()) || [];
+    const list = paperVers.slice(0, 120).map((id) => ({ id, type: 'release' }));
     sel.innerHTML =
       '<option value="">Select Minecraft version…</option>' +
       (list.length
         ? list.map((v) => `<option value="${escapeHtml(v.id)}">${escapeHtml(v.id)}</option>`).join('')
-        : '<option value="">Could not load Paper versions</option>');
+        : '<option value="">Could not load Paper versions — check your connection (Fill API).</option>');
     return;
   }
 

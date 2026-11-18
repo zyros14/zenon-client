@@ -75,31 +75,6 @@ async function renderSettings() {
         </div>
       </div>
 
-      <!-- Profile -->
-      <div class="settings-section">
-        <div class="settings-section-title">Profile</div>
-
-        <div class="settings-row">
-          <div class="settings-label">
-            <h4>Username</h4>
-            <p>Used for offline mode (and as a fallback if you’re signed out)</p>
-          </div>
-          <div class="settings-control">
-            <input type="text" class="form-input" id="set-username" value="${escapeHtml(settings.username || 'Player')}" placeholder="Player" />
-          </div>
-        </div>
-
-        <div class="settings-row">
-          <div class="settings-label">
-            <h4>Offline mode</h4>
-            <p>Allow using the launcher and launching without Microsoft sign-in</p>
-          </div>
-          <div class="settings-control" style="width:auto">
-            <div class="toggle-switch ${settings.offlineEnabled ? 'on' : ''}" id="set-offline-enabled"></div>
-          </div>
-        </div>
-      </div>
-
       <!-- Java -->
       <div class="settings-section">
         <div class="settings-section-title">Java</div>
@@ -212,7 +187,7 @@ async function renderSettings() {
           <img class="about-logo-img" src="assets/zenon-logo.png" alt="" draggable="false" />
           <div>
             <div style="font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:1px">ZENON CLIENT</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.0.8 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.0.9 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
           </div>
         </div>
       </div>
@@ -229,8 +204,6 @@ async function renderSettings() {
   closeToggle.addEventListener('click', () => {
     closeToggle.classList.toggle('on');
   });
-  const offlineToggle = document.getElementById('set-offline-enabled');
-  offlineToggle?.addEventListener('click', () => offlineToggle.classList.toggle('on'));
   const autoCheckToggle = document.getElementById('set-auto-check-updates');
   autoCheckToggle?.addEventListener('click', () => autoCheckToggle.classList.toggle('on'));
 
@@ -240,8 +213,6 @@ async function renderSettings() {
     const themeRaw = document.getElementById('set-theme').value;
     const newSettings = {
       ...prev,
-      username: document.getElementById('set-username').value.trim() || 'Player',
-      offlineEnabled: offlineToggle?.classList.contains('on') || false,
       javaPath: document.getElementById('set-java').value.trim() || 'java',
       maxRam: document.getElementById('set-max-ram').value,
       minRam: document.getElementById('set-min-ram').value,
@@ -249,6 +220,8 @@ async function renderSettings() {
       closeOnLaunch: closeToggle.classList.contains('on'),
       autoCheckUpdates: autoCheckToggle?.classList.contains('on') !== false
     };
+    delete newSettings.username;
+    delete newSettings.offlineEnabled;
 
     await window.zenon.saveSettings(newSettings);
     State.settings = newSettings;
@@ -258,13 +231,15 @@ async function renderSettings() {
 
   // Reset
   document.getElementById('settings-reset-btn').addEventListener('click', async () => {
-    if (!confirm('Reset all settings to defaults?')) return;
+    if (!await showConfirm({
+      title: 'Reset settings',
+      message: 'Reset all settings to defaults? This clears your theme, Java path, RAM allocation and update preferences.',
+      confirmLabel: 'Reset'
+    })) return;
     const prev = await window.zenon.getSettings();
     const recGb = Math.round((State.systemInfo?.recommendedMaxMb || 16384) / 1024);
     const defaults = {
       ...prev,
-      username: 'Player',
-      offlineEnabled: false,
       javaPath: 'java',
       maxRam: `${recGb}G`,
       minRam: '512M',
@@ -272,6 +247,8 @@ async function renderSettings() {
       closeOnLaunch: false,
       autoCheckUpdates: true
     };
+    delete defaults.username;
+    delete defaults.offlineEnabled;
     await window.zenon.saveSettings(defaults);
     State.settings = defaults;
     if (typeof applyTheme === 'function') applyTheme('zenon');
@@ -281,7 +258,12 @@ async function renderSettings() {
 
   // Logout
   document.getElementById('logout-btn').addEventListener('click', async () => {
-    if (!confirm('Logout from Microsoft?')) return;
+    if (!await showConfirm({
+      title: 'Log out',
+      message: 'Log out of Microsoft? You will need to sign in again to launch Minecraft.',
+      confirmLabel: 'Log out',
+      danger: false
+    })) return;
     await window.zenon.authLogout();
     showToast('Logged out', 'info');
     await ensureLoggedInOrShowAuth();

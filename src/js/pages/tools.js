@@ -1,7 +1,6 @@
 // ===== Tools Page =====
 async function renderTools() {
   const content = document.getElementById('main-content');
-  const settings = await window.zenon.getSettings();
   const selected = State.selectedInstance;
 
   const instName = selected ? selected.name : 'No instance selected';
@@ -35,7 +34,7 @@ async function renderTools() {
         </div>
       </div>
 
-      <div class="stats-row" style="grid-template-columns:repeat(3, minmax(0, 1fr));margin-bottom:18px">
+      <div class="stats-row" style="grid-template-columns:repeat(2, minmax(0, 1fr));margin-bottom:18px">
         <div class="stat-card">
           <div class="stat-icon stat-icon-blue">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
@@ -43,15 +42,6 @@ async function renderTools() {
           <div class="stat-info">
             <h3>${escapeHtml(String(State.instances.length))}</h3>
             <p>Instances</p>
-          </div>
-        </div>
-        <div class="stat-card">
-          <div class="stat-icon stat-icon-green">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20"/><path d="M2 12h20"/></svg>
-          </div>
-          <div class="stat-info">
-            <h3>${escapeHtml(String(settings.offlineEnabled ? 'ON' : 'OFF'))}</h3>
-            <p>Offline Mode</p>
           </div>
         </div>
         <div class="stat-card">

@@ -122,8 +122,8 @@ async function renderHome() {
 
       <div class="marquee reveal" aria-hidden="true">
         <div class="marquee-track">
-          ${['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'Offline mode', 'Live launch console']
-            .concat(['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'Offline mode', 'Live launch console'])
+          ${['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'One-click play', 'Live launch console']
+            .concat(['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'One-click play', 'Live launch console'])
             .map((t) => `<span class="marquee-item">${t}</span>`).join('')}
         </div>
       </div>

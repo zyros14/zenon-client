@@ -50,16 +50,6 @@ function ensureAuthOverlay() {
 
       <div class="auth-signin-box" id="auth-signin-box">
         <p class="auth-signin-hint" id="auth-signin-hint">Sign in with Microsoft to use Zenon Client.</p>
-        <div class="auth-offline-box" id="auth-offline-box">
-          <div class="auth-label">Or play offline</div>
-          <input type="text" class="form-input" id="auth-offline-name" placeholder="Offline username" />
-          <div class="auth-offline-actions">
-            <button class="btn btn-ghost btn-sm" type="button" id="auth-offline-btn">Continue offline</button>
-          </div>
-          <p class="auth-signin-hint" style="margin-top:10px">
-            Offline mode cannot join most online servers and won’t sync skins/capes. You can switch back by signing in later.
-          </p>
-        </div>
         <div class="auth-signin-link-block" id="auth-signin-link-block" style="display:none">
           <div class="auth-label">Your sign-in link — copy into your browser</div>
           <input type="text" class="form-input auth-url-input auth-signin-link-input" id="auth-link-url" readonly spellcheck="false" autocomplete="off" />
@@ -102,23 +92,6 @@ function ensureAuthOverlay() {
 
   document.getElementById('auth-quit-btn').addEventListener('click', () => window.zenon.close());
   document.getElementById('auth-start-btn').addEventListener('click', startMicrosoftLogin);
-  document.getElementById('auth-offline-btn')?.addEventListener('click', async () => {
-    try {
-      const input = document.getElementById('auth-offline-name');
-      const raw = input?.value?.trim() || '';
-      const name = raw || 'Player';
-      const prev = await window.zenon.getSettings();
-      const next = { ...prev, username: name, offlineEnabled: true };
-      await window.zenon.saveSettings(next);
-      State.settings = next;
-      State.auth = { loggedIn: true, profile: { id: 'offline', name } };
-      hideAuthOverlay();
-      showToast(`Offline mode: ${name}`, 'info', 2200);
-      await bootstrapMainUIAfterLogin();
-    } catch (e) {
-      showToast(e?.message || 'Could not start offline mode', 'error', 4000);
-    }
-  });
   ensureAuthProgressPipe();
 }
 
@@ -337,28 +310,10 @@ async function startMicrosoftLogin() {
   }
 }
 
-async function onAuthSuccess() {
-  const state = await window.zenon.authGetState();
-  State.auth = state;
-  hideAuthOverlay();
-  await bootstrapMainUIAfterLogin();
-}
-
 async function ensureLoggedInOrShowAuth() {
   const state = await window.zenon.authGetState();
   State.auth = state;
   if (state.loggedIn) return true;
-
-  // Offline mode fallback (lets the app run without Microsoft).
-  try {
-    const settings = await window.zenon.getSettings();
-    if (settings?.offlineEnabled) {
-      const name = String(settings.username || 'Player').trim() || 'Player';
-      State.auth = { loggedIn: true, profile: { id: 'offline', name } };
-      return true;
-    }
-  } catch (e) {}
-
   showAuthOverlay();
   return false;
 }

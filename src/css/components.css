@@ -2006,3 +2006,51 @@
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ===== Confirm dialog (destructive actions) ===== */
+.modal-confirm {
+  width: min(470px, 92vw);
+}
+.modal-confirm .modal-header h2 {
+  letter-spacing: 0.2px;
+}
+.confirm-body {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  padding: 4px 0 2px;
+}
+.confirm-icon {
+  flex: 0 0 auto;
+  width: 46px;
+  height: 46px;
+  border-radius: var(--radius-md);
+  background: var(--red-dim);
+  color: var(--red);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.28), 0 0 18px rgba(239, 68, 68, 0.12);
+}
+.confirm-icon svg {
+  width: 23px;
+  height: 23px;
+}
+.confirm-icon--warn {
+  background: var(--yellow-dim);
+  color: var(--yellow);
+  box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.28), 0 0 18px rgba(245, 158, 11, 0.12);
+}
+.confirm-message {
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--text-secondary);
+  padding-top: 2px;
+  word-break: break-word;
+}
+.modal-confirm .modal-footer {
+  gap: 10px;
+}
+.modal-confirm .modal-footer .btn-danger {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 0 18px rgba(239, 68, 68, 0.28);
+}

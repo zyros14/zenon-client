@@ -652,7 +652,13 @@ async function onLibraryInstalledClick(e) {
     await refreshLibraryInstalledTableOnly();
   }
   if (action.dataset.action === 'delete-mod') {
-    if (!confirm(`Remove ${filename.replace('.disabled', '')}?`)) return;
+    const base = filename.replace('.disabled', '');
+    const ok = await showConfirm({
+      title: 'Remove content',
+      message: `Remove "${base}"? The file will be deleted from this instance.`,
+      confirmLabel: 'Remove'
+    });
+    if (!ok) return;
     await window.zenon.deleteContent(inst.id, libraryContentKind, filename);
     showToast('Removed', 'info');
     // Keep user anchored on Library after delete.

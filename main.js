@@ -7,7 +7,6 @@ const fetch = require('node-fetch');
 const { v4: uuidv4 } = require('uuid');
 const AdmZip = require('adm-zip');
 const { Authflow, Titles } = require('prismarine-auth');
-const crypto = require('crypto');
 const os = require('os');
 
 let mainWindow;
@@ -190,21 +189,7 @@ function getAuthState(settings) {
   const mc = auth?.minecraft || null;
   const onlineLoggedIn = !!(profile?.id && profile?.name && mc?.accessToken && !isExpired(mc.expiresAt));
   if (onlineLoggedIn) return { loggedIn: true, profile };
-
-  // Offline mode (no Microsoft token) — still allows local play.
-  const offlineEnabled = !!s?.offlineEnabled;
-  const name = String(s?.username || 'Player').trim() || 'Player';
-  if (offlineEnabled) {
-    return { loggedIn: true, profile: { id: offlineUuidForName(name), name }, offline: true };
-  }
   return { loggedIn: false, profile: null };
-}
-
-function offlineUuidForName(name) {
-  const n = String(name || 'Player').trim() || 'Player';
-  const hex = crypto.createHash('md5').update(`OfflinePlayer:${n}`, 'utf8').digest('hex');
-  // Format as UUID string (not necessarily v4, but stable and valid-shaped).
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** Visible in the terminal (not filtered by stdout patch) + sent to renderer as auth:log */
@@ -548,20 +533,6 @@ async function ensureMinecraftAuthFresh() {
   const settings = loadSettings();
   const auth = settings.auth || {};
 
-  // Offline mode: return a synthetic auth object.
-  if (settings?.offlineEnabled) {
-    const name = String(settings.username || 'Player').trim() || 'Player';
-    return {
-      settings,
-      auth: {
-        clientToken: auth.clientToken || uuidv4(),
-        minecraft: { accessToken: '0', expiresAt: nowMs() + 10 * 365 * 24 * 60 * 60 * 1000 },
-        profile: { id: offlineUuidForName(name), name },
-        offline: true
-      }
-    };
-  }
-
   if (auth?.minecraft?.accessToken && !isExpired(auth.minecraft.expiresAt)) {
     return { settings, auth };
   }
@@ -613,7 +584,6 @@ async function ensureMinecraftAuthFresh() {
 // Default settings
 function getDefaultSettings() {
   return {
-    username: 'Player',
     javaPath: 'java',
     maxRam: '2G',
     minRam: '512M',
@@ -624,7 +594,6 @@ function getDefaultSettings() {
     msaClientId: DEFAULT_MSA_CLIENT_ID,
     msaScopes: 'XboxLive.signin offline_access',
     auth: null,
-    offlineEnabled: false,
     autoCheckUpdates: true,
     /** Auto-detected system RAM + one-time auto-configuration flag. */
     ramDetectedMb: TOTAL_RAM_MB,
@@ -647,6 +616,9 @@ function loadSettings() {
     }
   } catch (e) {}
   if (!settings) settings = getDefaultSettings();
+  // Offline-mode fields were removed — drop them if they linger in saved settings.
+  delete settings.username;
+  delete settings.offlineEnabled;
 
   // One-time auto-detection: pick a recommended allocation from the real system RAM.
   if (!settings.ramAutoConfigured) {
@@ -732,7 +704,7 @@ function writeInstanceIconFile(instanceId, buffer, extOrMime) {
 async function downloadInstanceIconFromUrl(instanceId, url) {
   const u = String(url || '').trim();
   if (!u) return null;
-  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
   if (!res.ok) throw new Error(`Icon download failed (HTTP ${res.status})`);
   const ct = res.headers.get('content-type') || '';
   const buf = await res.buffer();
@@ -1422,17 +1394,19 @@ async function downloadVanillaServerJarTo(dir, version) {
 }
 
 async function downloadPaperServerJarTo(dir, version) {
+  // Paper's v2 API was sunset (410) — use the Fill v3 API.
   const buildsR = await nativeFetch(
-    `https://api.papermc.io/v2/projects/paper/versions/${encodeURIComponent(version)}/builds`
+    `https://fill.papermc.io/v3/projects/paper/versions/${encodeURIComponent(version)}/builds`
   );
   if (!buildsR.ok) throw new Error(`Paper has no builds for ${version} (HTTP ${buildsR.status}).`);
-  const buildsData = await buildsR.json();
-  const builds = (buildsData.builds || []).filter((b) => b.downloads?.application?.name);
-  if (!builds.length) throw new Error(`No downloadable Paper builds for ${version}.`);
-  const latest = builds.reduce((a, b) => (b.build > a.build ? b : a));
-  const bn = latest.build;
-  const fname = latest.downloads.application.name;
-  const url = `https://api.papermc.io/v2/projects/paper/versions/${encodeURIComponent(version)}/builds/${bn}/downloads/${encodeURIComponent(fname)}`;
+  const builds = await buildsR.json();
+  const list = (Array.isArray(builds) ? builds : []).filter((b) => b?.downloads?.['server:default']?.url);
+  if (!list.length) throw new Error(`No downloadable Paper builds for ${version}.`);
+  // Prefer the latest STABLE build; fall back to whatever exists (RC channels).
+  const stable = list.filter((b) => String(b.channel || '').toUpperCase() === 'STABLE');
+  const pool = stable.length ? stable : list;
+  const latest = pool.reduce((a, b) => (Number(b.id) > Number(a.id) ? b : a));
+  const url = latest.downloads['server:default'].url;
   const jarR = await nativeFetch(url);
   if (!jarR.ok) throw new Error(`Paper jar HTTP ${jarR.status}`);
   const buf = Buffer.from(await jarR.arrayBuffer());
@@ -1502,10 +1476,29 @@ async function installFabricServerViaInstaller(dir, mcVersion, fabricLoaderVersi
 
 async function fetchPaperMcVersionList() {
   try {
-    const r = await nativeFetch('https://api.papermc.io/v2/projects/paper');
+    // Fill v3: { versions: { "26.3": ["26.3", "26.3-rc-3"], "26.2": [...], ... } }
+    const r = await nativeFetch('https://fill.papermc.io/v3/projects/paper');
     if (!r.ok) return [];
     const j = await r.json();
-    return Array.isArray(j.versions) ? j.versions : [];
+    const groups = j?.versions && typeof j.versions === 'object' ? j.versions : {};
+    const familyKey = (f) => String(f).split('.').map((n) => parseInt(n, 10) || 0);
+    const families = Object.keys(groups).sort((a, b) => {
+      const pa = familyKey(a), pb = familyKey(b);
+      for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const d = (pb[i] || 0) - (pa[i] || 0);
+        if (d) return d;
+      }
+      return 0;
+    });
+    const out = [];
+    for (const family of families) {
+      for (const id of groups[family] || []) {
+        const s = String(id);
+        if (/-rc/i.test(s)) continue; // hide pre-releases from the picker
+        if (!out.includes(s)) out.push(s);
+      }
+    }
+    return out;
   } catch (e) {
     return [];
   }
@@ -1520,7 +1513,7 @@ function compareForgeFullIdDesc(a, b) {
   return String(b).localeCompare(String(a));
 }
 
-const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.0.8 (Electron; +https://github.com/)' };
+const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.0.9 (Electron; +https://github.com/)' };
 
 /** e.g. 1.21.10-rc1 → 1.21.10 (Forge promos/maven use release ids). */
 function forgeMcVersionFallbacks(mcVersion) {
@@ -1649,7 +1642,15 @@ async function createServerEntry(data) {
   if (!version) throw new Error('Select a Minecraft version');
 
   const settings = loadSettings();
-  const javaExe = settings.javaPath || 'java';
+  // Resolve the Java this Minecraft version needs (26.x → Java 25); used for installer runs and README hints.
+  let javaExe = settings.javaPath || 'java';
+  try {
+    const requiredMajor = await requiredJavaMajorForMcVersion(version);
+    const javaRes = await resolveJavaExecutable(requiredMajor, version, settings, {}, () => {});
+    javaExe = javaRes.javaPath;
+  } catch (e) {
+    /* installer steps will surface any Java error with a clear message */
+  }
 
   const id = uuidv4();
   const dir = path.join(SERVERS_DIR, id);
@@ -1798,19 +1799,30 @@ function findFabricLaunchJarName(serverDir) {
   }
 }
 
-function resolveDedicatedServerLaunch(cfg) {
+async function resolveDedicatedServerLaunch(cfg) {
   const dir = cfg.dir;
   if (!dir || !fs.existsSync(dir)) return { error: 'Server folder missing' };
   const settings = loadSettings();
-  const java = String(settings.javaPath || 'java').trim() || 'java';
   const maxRam = clampRamMb(parseInt(String(cfg.maxRamMb || '2048'), 10) || 2048, 2048);
   const jvm = [`-Xms${Math.min(512, maxRam)}M`, `-Xmx${maxRam}M`];
   const kind = String(cfg.serverKind || 'vanilla').toLowerCase();
 
+  // Servers need the same Java their Minecraft version requires (e.g. 26.x → Java 25).
+  const requiredMajor = await requiredJavaMajorForMcVersion(cfg.version);
+  const javaLogs = [`[Zenon] Minecraft ${cfg.version || '?'} requires Java ${requiredMajor}+`];
+  let java;
+  try {
+    const javaRes = await resolveJavaExecutable(requiredMajor, cfg.version || '1.20.1', settings, {}, (_t, msg) => javaLogs.push(String(msg)));
+    java = javaRes.javaPath;
+    javaLogs.push(`[Zenon] Server will use Java ${javaRes.major} (${javaRes.source})`);
+  } catch (e) {
+    return { error: e.message };
+  }
+
   if (kind === 'vanilla' || kind === 'paper') {
     const jar = path.join(dir, 'server.jar');
     if (!fs.existsSync(jar)) return { error: 'Missing server.jar' };
-    return { cwd: dir, command: java, args: [...jvm, '-jar', 'server.jar', 'nogui'] };
+    return { cwd: dir, command: java, args: [...jvm, '-jar', 'server.jar', 'nogui'], javaLogs };
   }
 
   if (kind === 'fabric') {
@@ -1818,19 +1830,19 @@ function resolveDedicatedServerLaunch(cfg) {
     if (!jarName) return { error: 'Could not find Fabric server jar in folder' };
     const jarPath = path.join(dir, jarName);
     if (!fs.existsSync(jarPath)) return { error: 'Fabric server jar path invalid' };
-    return { cwd: dir, command: java, args: [...jvm, '-jar', jarName, 'nogui'] };
+    return { cwd: dir, command: java, args: [...jvm, '-jar', jarName, 'nogui'], javaLogs };
   }
 
   if (kind === 'forge') {
     if (process.platform === 'win32') {
       const bat = path.join(dir, 'run.bat');
       if (fs.existsSync(bat)) {
-        return { cwd: dir, command: 'cmd.exe', args: ['/d', '/s', '/c', 'run.bat'], shell: false };
+        return { cwd: dir, command: 'cmd.exe', args: ['/d', '/s', '/c', 'run.bat'], shell: false, javaLogs };
       }
     }
     const sh = path.join(dir, 'run.sh');
     if (fs.existsSync(sh)) {
-      return { cwd: dir, command: 'sh', args: ['run.sh'], shell: false };
+      return { cwd: dir, command: 'sh', args: ['run.sh'], shell: false, javaLogs };
     }
     return { error: 'Forge: run.bat / run.sh not found. Open the folder and generate server files first.' };
   }
@@ -1972,9 +1984,10 @@ async function startDedicatedServer(serverId) {
       needsEula: true
     };
   }
-  const launch = resolveDedicatedServerLaunch(cfg);
+  const launch = await resolveDedicatedServerLaunch(cfg);
   if (launch.error) return { success: false, error: launch.error };
 
+  // Register the runtime BEFORE spawning so the Java resolution lines land in the console.
   const proc = spawn(launch.command, launch.args, {
     cwd: launch.cwd,
     env: process.env,
@@ -1994,6 +2007,7 @@ async function startDedicatedServer(serverId) {
   };
   SERVER_RUNTIME.set(serverId, rt);
   wireServerProcessStreams(serverId, proc);
+  for (const line of launch.javaLogs || []) appendServerLog(serverId, line, 'stdout');
   sendToRenderer('server-state', { serverId, running: true });
   sendToRenderer('server-players', { serverId, active: [], inactive: [] });
   return { success: true };
@@ -2131,7 +2145,7 @@ async function searchModrinth({ query, version, loader, projectType = 'mod', lim
     const url = `https://api.modrinth.com/v2/search?query=${encodeURIComponent(query || '')}&facets=${encodeURIComponent(facetsStr)}&limit=${limit}&offset=${offset}`;
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.9' }
     });
     const text = await res.text();
     let data;
@@ -2176,7 +2190,7 @@ async function spigetSearchResources({ query, size = 20, page = 1, mode = 'searc
       const safeQ = encodeURIComponent(q);
       url = `https://api.spiget.org/v2/search/resources/${safeQ}?size=${lim}&page=${pg}`;
     }
-    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -2189,7 +2203,7 @@ async function spigetGetResource(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
   if (!res.ok) throw new Error(`Spiget resource HTTP ${res.status}`);
   return await res.json();
 }
@@ -2198,7 +2212,7 @@ async function spigetDownloadResourceJar(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}/download`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' }, redirect: 'follow' });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.9' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`Spiget download HTTP ${res.status}`);
   const buf = await res.buffer();
   if (!buf?.length) throw new Error('Empty download');
@@ -2226,7 +2240,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
     if (params.length) url += '?' + params.join('&');
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.9' }
     });
     return await res.json();
   } catch (e) {
@@ -2235,7 +2249,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
 }
 
 // ----- Modrinth dependency auto-install -----
-const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.0.8' };
+const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.0.9' };
 const __mrProjectCache = new Map(); // projectId -> { at, data }
 
 async function fetchModrinthProjectCached(projectId) {
@@ -2382,7 +2396,7 @@ function safeJoinUnderInstanceRoot(instanceRoot, relPath) {
 async function fetchLatestFabricLoaderForMc(mcVersion) {
   try {
     const res = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.8' }
+      headers: { 'User-Agent': 'ZenonClient/1.0.9' }
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -2402,7 +2416,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
     const file = versionData.files.find((f) => f.primary) || versionData.files[0];
     if (!file || !file.url) throw new Error('No modpack file on this version');
 
-    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
     if (!packRes.ok) throw new Error(`Download failed (HTTP ${packRes.status})`);
     const buffer = await packRes.buffer();
 
@@ -2458,7 +2472,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!rel || !Array.isArray(f.downloads) || !f.downloads[0]) continue;
       const dest = safeJoinUnderInstanceRoot(root, rel);
       fs.ensureDirSync(path.dirname(dest));
-      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
       if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
       const chunk = await fr.buffer();
       fs.writeFileSync(dest, chunk);
@@ -2570,7 +2584,7 @@ async function fetchSignedTexturesProperty(uuid) {
   const noDashes = id.replace(/-/g, '');
   try {
     const url = `https://sessionserver.mojang.com/session/minecraft/profile/${encodeURIComponent(noDashes)}?unsigned=false`;
-    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.8' } });
+    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.9' } });
     if (!res.ok) return null;
     const j = await res.json();
     const props = Array.isArray(j?.properties) ? j.properties : [];
@@ -2581,6 +2595,17 @@ async function fetchSignedTexturesProperty(uuid) {
   } catch (e) {
     return null;
   }
+}
+
+/** Read the required Java major for a Minecraft version (metadata first, heuristic fallback). */
+async function requiredJavaMajorForMcVersion(mcVersion) {
+  try {
+    const manifest = await getMcVersionManifest().catch(() => null);
+    const vj = await getVersionJson(mcVersion, manifest);
+    const n = vj?.javaVersion?.majorVersion ? Number(vj.javaVersion.majorVersion) : null;
+    if (n && Number.isFinite(n)) return n;
+  } catch (e) {}
+  return guessRequiredJavaMajor(mcVersion);
 }
 
 // ===== Java runtime resolution (each MC version needs a specific Java major) =====
@@ -2843,29 +2868,26 @@ async function launchGame(instanceId) {
     forgeInstallerPath = await ensureForgeInstallerJar(fv);
   }
 
-  const isOffline = !!auth?.offline || !!settings?.offlineEnabled;
   const authorization = {
-    access_token: isOffline ? '0' : mcToken,
+    access_token: mcToken,
     client_token: auth.clientToken || uuidv4(),
     uuid: profile.id,
     name: profile.name,
     user_properties: {},
-    meta: { type: isOffline ? 'offline' : 'msa' }
+    meta: { type: 'msa' }
   };
 
   // Some Minecraft versions log "Signature is missing from Property textures" when the launcher
   // provides a textures property without a signature. If we can fetch a signed textures property,
   // pass it through.
-  if (!isOffline) {
-    const tex = await fetchSignedTexturesProperty(profile.id);
-    if (tex?.value && tex?.signature) {
-      authorization.user_properties = {
-        textures: {
-          value: tex.value,
-          signature: tex.signature
-        }
-      };
-    }
+  const tex = await fetchSignedTexturesProperty(profile.id);
+  if (tex?.value && tex?.signature) {
+    authorization.user_properties = {
+      textures: {
+        value: tex.value,
+        signature: tex.signature
+      }
+    };
   }
 
   const maxSockets = Math.min(
@@ -2874,14 +2896,7 @@ async function launchGame(instanceId) {
   );
 
   // Resolve the right Java for this Minecraft version (26.x needs Java 25, 1.20.5+ needs 21, 1.18+ needs 17…).
-  let requiredMajor = null;
-  try {
-    const vj = await getVersionJson(instance.version, manifest);
-    requiredMajor = vj?.javaVersion?.majorVersion ? Number(vj.javaVersion.majorVersion) : null;
-  } catch (e) {}
-  if (!requiredMajor || !Number.isFinite(requiredMajor)) {
-    requiredMajor = guessRequiredJavaMajor(instance.version);
-  }
+  const requiredMajor = await requiredJavaMajorForMcVersion(instance.version);
   sendLog('info', `[Zenon] Minecraft ${instance.version} requires Java ${requiredMajor}+`);
 
   let javaPath;
@@ -2898,10 +2913,22 @@ async function launchGame(instanceId) {
     instance.memoryCustomEnabled === true ||
     (instance.memoryCustomEnabled == null &&
       Boolean(String(instance.maxRamOverride || '').trim() || String(instance.minRamOverride || '').trim()));
-  const memMax =
+  const memMaxRaw =
     customMemOn && String(instance.maxRamOverride || '').trim()
       ? instance.maxRamOverride
       : settings.maxRam;
+  // Minecraft 26.x native-crashes below ~3 GB of heap (access violation while baking texture atlases).
+  // Bump the effective launch heap for Java-25+ versions instead of letting the game die silently.
+  let memMax = memMaxRaw;
+  const parsedMemMaxMb = parseRamStringToMb(memMaxRaw) || 0;
+  if (requiredMajor >= 25 && parsedMemMaxMb > 0 && parsedMemMaxMb < 3072) {
+    const bumped = mbToRamLabel(3072);
+    sendLog(
+      'info',
+      `[Zenon] Minecraft 26.x needs at least 3 GB of heap — your ${parsedMemMaxMb} MB allocation would crash the game. Launching with ${bumped} (Settings keeps your value for older versions).`
+    );
+    memMax = bumped;
+  }
   const memMin =
     customMemOn && String(instance.minRamOverride || '').trim()
       ? instance.minRamOverride
