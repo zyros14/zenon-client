@@ -1,11 +1,14 @@
-// ===== Discovery (Modrinth browse) =====
+﻿// ===== Discovery (Modrinth + CurseForge browse) =====
 const DISCOVERY_PAGE_SIZE = 24;
 
 let discoverySearchTimer = null;
 let discoveryQuery = '';
 let discoveryTypeId = 'mod';
 let discoveryOffset = 0;
-// CurseForge removed
+// 'modrinth' | 'curseforge'
+let discoverySource = 'modrinth';
+try { discoverySource = localStorage.getItem('zenon-discovery-source') || 'modrinth'; } catch (e) { discoverySource = 'modrinth'; }
+if (discoverySource !== 'modrinth' && discoverySource !== 'curseforge') discoverySource = 'modrinth';
 
 const DISCOVERY_TYPES = [
   {
@@ -80,7 +83,7 @@ async function openDiscoveryInstallTargetModal(projectId, title, iconUrl = '', a
     document.getElementById('discovery-target-cancel')?.addEventListener('click', () => closeModal('modal-discovery-target'));
     document.getElementById('discovery-target-go-instances')?.addEventListener('click', () => {
       closeModal('modal-discovery-target');
-      navigateTo('library', { force: true });
+      navigateTo('instance', { force: true });
     });
   } else {
     body.innerHTML = `
@@ -144,17 +147,24 @@ async function renderDiscovery() {
     <div class="page page-discovery">
       <div class="discovery-head glow-hero">
         <div>
-          <span class="page-kicker">Modrinth</span>
+          <span class="page-kicker">${discoverySource === 'curseforge' ? 'CurseForge' : 'Modrinth'}</span>
           <h1 class="page-title discovery-title">Discovery</h1>
-          <p class="page-subtitle discovery-sub">Search Modrinth for mods, modpacks, shaders, resource packs, and data packs.</p>
-          <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance (or a modpack creates a new one).</p>
+          <p class="page-subtitle discovery-sub">${discoverySource === 'curseforge'
+            ? 'Search CurseForge for mods, shaders, resource packs, and data packs.'
+            : 'Search Modrinth for mods, modpacks, shaders, resource packs, and data packs.'}</p>
+          <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance${discoverySource === 'modrinth' ? ' (or a modpack creates a new one)' : ' (modpack installs are Modrinth-only for now)'}.</p>
         </div>
+      </div>
+
+      <div class="discovery-source-row" id="discovery-source-row" role="tablist" aria-label="Content source">
+        <button type="button" class="id-pill ${discoverySource === 'modrinth' ? 'active' : ''}" data-source="modrinth" role="tab" aria-selected="${discoverySource === 'modrinth'}">Modrinth</button>
+        <button type="button" class="id-pill ${discoverySource === 'curseforge' ? 'active' : ''}" data-source="curseforge" role="tab" aria-selected="${discoverySource === 'curseforge'}">CurseForge</button>
       </div>
 
       <div class="discovery-type-row" id="discovery-type-row">
         ${DISCOVERY_TYPES.map(
           (t) => `
-          <button type="button" class="id-pill ${t.id === discoveryTypeId ? 'active' : ''}" data-type="${t.id}">${t.label}</button>
+          <button type="button" class="id-pill ${t.id === discoveryTypeId ? 'active' : ''} ${discoverySource === 'curseforge' && t.id === 'modpack' ? 'is-disabled' : ''}" data-type="${t.id}" ${discoverySource === 'curseforge' && t.id === 'modpack' ? 'aria-disabled="true" title="CurseForge modpack installs are not supported yet"' : ''}>${t.label}</button>
         `
         ).join('')}
       </div>
@@ -185,9 +195,26 @@ async function renderDiscovery() {
     </div>
   `;
 
+  document.getElementById('discovery-source-row')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-source]');
+    if (!btn) return;
+    const next = btn.dataset.source === 'curseforge' ? 'curseforge' : 'modrinth';
+    if (next === discoverySource) return;
+    discoverySource = next;
+    try { localStorage.setItem('zenon-discovery-source', next); } catch (_) {}
+    // CurseForge has no modpack support here — force back to Mods if modpacks were selected.
+    if (next === 'curseforge' && discoveryTypeId === 'modpack') discoveryTypeId = 'mod';
+    discoveryOffset = 0;
+    await renderDiscovery();
+    await runDiscoverySearch(0);
+  });
+
   document.getElementById('discovery-type-row')?.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-type]');
-    if (!btn) return;
+    if (!btn || btn.getAttribute('aria-disabled') === 'true') {
+      if (btn) showToast('CurseForge modpack installs are not supported yet — switch to Modrinth.', 'info', 3500);
+      return;
+    }
     discoveryTypeId = btn.dataset.type;
     discoveryOffset = 0;
     await renderDiscovery();
@@ -254,6 +281,7 @@ async function runDiscoverySearch(offset) {
   if (!resultsEl) return;
 
   if (typeof offset === 'number') discoveryOffset = offset;
+  if (discoverySource === 'curseforge' && currentDiscoveryType().id === 'modpack') discoveryTypeId = 'mod';
   const type = currentDiscoveryType();
   const version = document.getElementById('discovery-filter-version')?.value || '';
   const loaderEl = document.getElementById('discovery-filter-loader');
@@ -264,16 +292,20 @@ async function runDiscoverySearch(offset) {
   resultsEl.innerHTML = '<div class="loading-spinner"></div>';
   if (pagerEl) pagerEl.style.display = 'none';
 
-  const data = await window.zenon.searchModrinth({
+  const searchParams = {
     query: discoveryQuery,
     version,
     loader,
     projectType: type.projectType,
     limit: DISCOVERY_PAGE_SIZE,
     offset: discoveryOffset
-  });
+  };
+  const data = discoverySource === 'curseforge'
+    ? await window.zenon.searchCurseforge(searchParams)
+    : await window.zenon.searchModrinth(searchParams);
   const hits = data.hits || [];
   const total = data.total_hits != null ? data.total_hits : hits.length;
+  const searchError = data.error || '';
 
   if (!hits || hits.length === 0) {
     if (pagerEl) {
@@ -283,7 +315,7 @@ async function runDiscoverySearch(offset) {
     resultsEl.innerHTML = `
       <div class="empty-state discovery-empty">
         <h3>No results</h3>
-        <p>Try another keyword, type, or Minecraft version.</p>
+        <p>${searchError ? escapeHtml(searchError) : 'Try another keyword, type, or Minecraft version.'}</p>
       </div>
     `;
     return;

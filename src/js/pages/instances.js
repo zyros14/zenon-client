@@ -12,6 +12,7 @@ function syncSelectedInstanceWithList() {
 }
 
 window.syncSelectedInstanceWithList = syncSelectedInstanceWithList;
+window.launchInstance = launchInstance;
 
 async function renderInstances() {
   const content = document.getElementById('main-content');
@@ -25,7 +26,7 @@ async function renderInstances() {
           <div>
             <span class="page-kicker">Manage</span>
             <h1 class="page-title">Instances</h1>
-            <p class="page-subtitle">${State.instances.length} instance${State.instances.length !== 1 ? 's' : ''} Â· click a card to open its library</p>
+            <p class="page-subtitle">${State.instances.length} instance${State.instances.length !== 1 ? 's' : ''} &middot; click a card to open it</p>
           </div>
           <div style="display:flex;gap:10px;align-items:center">
             <button class="btn btn-ghost" id="import-instance-btn">Import</button>
@@ -122,7 +123,7 @@ function renderInstanceCard(inst) {
               <span class="tag tag-version">${escapeHtml(inst.version)}</span>
               ${loaderTag}
             </div>
-            <div class="ic-hint">Library â€” content, files, worlds, logs</div>
+            <div class="ic-hint">Content, files, worlds, logs</div>
           </div>
         </div>
         <div class="ic-actions">
@@ -161,7 +162,7 @@ function bindInstanceCardEvents() {
       document.querySelectorAll('.instance-card').forEach(c => {
         c.classList.toggle('selected', c.dataset.id === id);
       });
-      navigateTo('library', { force: true });
+      navigateTo('instance', { force: true });
     };
     card.addEventListener('click', openLibrary);
     card.addEventListener('keydown', (e) => {
@@ -616,7 +617,7 @@ async function openEditInstanceModal(id) {
       closeModal('modal-edit-instance');
       showToast('Instance settings saved', 'success');
       renderInstances();
-      if (State.currentPage === 'library') renderLibrary();
+      if (State.currentPage === 'instance') renderLibrary();
     } finally {
       btn.disabled = false;
       btn.textContent = 'Save changes';
@@ -765,7 +766,7 @@ async function openCreateInstanceModal() {
       showToast(`Instance "${name}" created!`, 'success');
       // After creating an instance, take user straight to Library.
       State.libraryPane = 'content';
-      navigateTo('library', { force: true });
+      navigateTo('instance', { force: true });
     } catch (e) {
       showToast(`Create failed: ${e?.message || e}`, 'error', 5000);
     } finally {
@@ -802,8 +803,8 @@ async function confirmDeleteInstance(id) {
   // of yanking them to Library.
   if (currentPage === 'instances') {
     await renderInstances();
-  } else if (currentPage === 'library') {
-    await navigateTo('library', { force: true });
+  } else if (currentPage === 'instance') {
+    await navigateTo('instance', { force: true });
   }
 }
 

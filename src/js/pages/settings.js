@@ -1,4 +1,4 @@
-// ===== Settings Page =====
+﻿// ===== Settings Page =====
 /** Build RAM allocation options (MB values) up to the detected system RAM. */
 function ramOptionValues(totalMb) {
   // Cap the selectable max at a whole-GB value ≤ installed RAM (e.g. 63G on a 65407 MB machine).
@@ -187,7 +187,7 @@ async function renderSettings() {
           <img class="about-logo-img" src="assets/zenon-logo.png" alt="" draggable="false" />
           <div>
             <div style="font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:1px">ZENON CLIENT</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.0.10 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.1.0 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
           </div>
         </div>
       </div>

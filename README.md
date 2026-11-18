@@ -99,7 +99,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-release.ps1 -
 
 `scripts/create-release.ps1` creates the release from the artifacts in that folder using the git credential store (works without `gh`). The script is already used for v1.0.8+; it uploads the `.exe`, `.blockmap`, `latest.yml`, and `builder-debug.yml`.
 
-Auto-updates work from 1.0.8 → 1.0.10 via `latest.yml` (verified in packaged builds only).
+Auto-updates work from 1.0.8 → 1.1.0 via `latest.yml` (verified in packaged builds only).
 
 ---
 

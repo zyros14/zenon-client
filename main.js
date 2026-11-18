@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+﻿const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs-extra');
 const { exec, spawn, spawnSync } = require('child_process');
@@ -35,6 +35,11 @@ fs.ensureDirSync(SHARED_MC_CACHE);
 
 const SERVERS_DIR = path.join(USER_DATA, 'servers');
 fs.ensureDirSync(SERVERS_DIR);
+
+/** Skin library — user's custom Minecraft skin files, stored locally. */
+const SKINS_DIR = path.join(USER_DATA, 'skins');
+fs.ensureDirSync(SKINS_DIR);
+const SKIN_LIBRARY_FILE = path.join(SKINS_DIR, 'library.json');
 
 /** Launcher-managed Java runtimes (downloaded when the system Java is too old for a MC version). */
 const JAVA_RUNTIMES_DIR = path.join(USER_DATA, 'java-runtimes');
@@ -704,7 +709,7 @@ function writeInstanceIconFile(instanceId, buffer, extOrMime) {
 async function downloadInstanceIconFromUrl(instanceId, url) {
   const u = String(url || '').trim();
   if (!u) return null;
-  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
   if (!res.ok) throw new Error(`Icon download failed (HTTP ${res.status})`);
   const ct = res.headers.get('content-type') || '';
   const buf = await res.buffer();
@@ -1513,7 +1518,7 @@ function compareForgeFullIdDesc(a, b) {
   return String(b).localeCompare(String(a));
 }
 
-const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.0.10 (Electron; +https://github.com/)' };
+const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.1.0 (Electron; +https://github.com/)' };
 
 /** e.g. 1.21.10-rc1 → 1.21.10 (Forge promos/maven use release ids). */
 function forgeMcVersionFallbacks(mcVersion) {
@@ -2133,6 +2138,110 @@ async function ensureFabricProfile(instanceDir, mcVersion, loaderVersion) {
   return customId;
 }
 
+// ===== CurseForge API (via Vercel proxy — the API key never ships in the client) =====
+// The proxy at curseforge-proxy.vercel.app injects x-api-key server-side.
+const CF_PROXY = 'https://curseforge-proxy.vercel.app/api/cf';
+const CF_GAME_ID = 432; // Minecraft
+const CF_CLASS_IDS = { mod: 6, modpack: 4471, resourcepack: 12, shader: 6552, datapack: 6945 };
+const CF_LOADER_TYPES = { forge: 1, fabric: 4, quilt: 5, neoforge: 6 };
+const CF_LOADER_NAMES = ['forge', 'fabric', 'quilt', 'neoforge'];
+
+async function cfFetchJson(pathAndQuery) {
+  const res = await nativeFetch(`${CF_PROXY}/${pathAndQuery}`, {
+    headers: { 'User-Agent': 'ZenonClient/1.1.0', Accept: 'application/json' }
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch (e) {}
+  if (!res.ok) {
+    const err = new Error(`CurseForge HTTP ${res.status}`);
+    err.status = res.status;
+    err.body = String(text || '').slice(0, 300);
+    throw err;
+  }
+  return json || { data: [], pagination: { totalCount: 0 } };
+}
+
+async function searchCurseforge({ query, version, loader, projectType = 'mod', limit = 20, offset = 0 }) {
+  try {
+    const classId = CF_CLASS_IDS[projectType] || CF_CLASS_IDS.mod;
+    const pageSize = Math.max(1, Math.min(50, Number(limit) || 20));
+    const params = [
+      `gameId=${CF_GAME_ID}`,
+      `classId=${classId}`,
+      `index=${Math.max(0, Number(offset) || 0)}`,
+      `pageSize=${pageSize}`,
+      `sortField=2`, // Popularity
+      `sortOrder=desc`
+    ];
+    const q = String(query || '').trim();
+    if (q) params.push(`searchFilter=${encodeURIComponent(q)}`);
+    const v = String(version || '').trim();
+    const l = String(loader || '').toLowerCase();
+    const loaderType = CF_LOADER_TYPES[l] || null;
+    // modLoaderType must be coupled with gameVersion — skip the loader filter when no version filter is set.
+    if (v) {
+      params.push(`gameVersion=${encodeURIComponent(v)}`);
+      if (projectType === 'mod' && loaderType) params.push(`modLoaderType=${loaderType}`);
+    }
+    const j = await cfFetchJson(`v1/mods/search?${params.join('&')}`);
+    const mods = Array.isArray(j?.data) ? j.data : [];
+    const hits = mods.map((m) => ({
+      project_id: `cf-${m.id}`,
+      title: m.name || 'Untitled',
+      author: (Array.isArray(m.authors) && m.authors[0] && m.authors[0].name) || 'Unknown',
+      description: m.summary || '',
+      downloads: m.downloadCount || 0,
+      icon_url: (m.logo && m.logo.thumbnailUrl) ? m.logo.thumbnailUrl : '',
+      source: 'curseforge'
+    }));
+    return { hits, total_hits: (j && j.pagination && j.pagination.totalCount) || hits.length };
+  } catch (e) {
+    let msg = (e && e.message) || String(e);
+    if (e && e.status === 403) {
+      msg = 'CurseForge refused the request (403). The proxy key needs to be regenerated — at console.curseforge.com, rename the organization, then recreate the API key.';
+    }
+    return { hits: [], total_hits: 0, error: msg };
+  }
+}
+
+async function getCurseforgeProjectVersions(cfModId, mcVersion, loader) {
+  try {
+    const params = ['index=0', 'pageSize=30'];
+    const v = String(mcVersion || '').trim();
+    const l = String(loader || '').toLowerCase();
+    const loaderType = CF_LOADER_TYPES[l] || null;
+    // modLoaderType must be coupled with gameVersion.
+    if (v) {
+      params.push(`gameVersion=${encodeURIComponent(v)}`);
+      if (loaderType) params.push(`modLoaderType=${loaderType}`);
+    }
+    const j = await cfFetchJson(`v1/mods/${encodeURIComponent(cfModId)}/files?${params.join('&')}`);
+    const files = Array.isArray(j?.data) ? j.data : [];
+    // Show newest first regardless of API sort semantics.
+    files.sort((a, b) => new Date(b?.fileDate || 0) - new Date(a?.fileDate || 0));
+    const loaderName = CF_LOADER_NAMES.includes(l) ? l : null;
+    return files.map((f) => {
+      const gvs = Array.isArray(f.gameVersions) ? f.gameVersions.map(String) : [];
+      const detected = gvs.filter((g) => CF_LOADER_NAMES.includes(String(g).toLowerCase())).map((g) => String(g).toLowerCase());
+      const tags = gvs.filter((g) => /^\d/.test(g));
+      const url = (f.downloadUrl && String(f.downloadUrl)) || `${CF_PROXY}/v1/mods/${cfModId}/files/${f.id}/download`;
+      return {
+        id: `cf-${f.id}`,
+        name: f.displayName || f.fileName || `File ${f.id}`,
+        version_number: f.fileName || String(f.id),
+        game_versions: tags.length ? tags : gvs,
+        loaders: loaderName ? [loaderName] : detected,
+        project_id: `cf-${cfModId}`,
+        _cf: true,
+        files: [{ url, filename: f.fileName || `curseforge-${cfModId}-${f.id}.jar`, primary: true }]
+      };
+    });
+  } catch (e) {
+    return [];
+  }
+}
+
 // Modrinth API
 async function searchModrinth({ query, version, loader, projectType = 'mod', limit = 20, offset = 0 }) {
   try {
@@ -2145,7 +2254,7 @@ async function searchModrinth({ query, version, loader, projectType = 'mod', lim
     const url = `https://api.modrinth.com/v2/search?query=${encodeURIComponent(query || '')}&facets=${encodeURIComponent(facetsStr)}&limit=${limit}&offset=${offset}`;
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.10' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
     });
     const text = await res.text();
     let data;
@@ -2190,7 +2299,7 @@ async function spigetSearchResources({ query, size = 20, page = 1, mode = 'searc
       const safeQ = encodeURIComponent(q);
       url = `https://api.spiget.org/v2/search/resources/${safeQ}?size=${lim}&page=${pg}`;
     }
-    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -2203,7 +2312,7 @@ async function spigetGetResource(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
   if (!res.ok) throw new Error(`Spiget resource HTTP ${res.status}`);
   return await res.json();
 }
@@ -2212,7 +2321,7 @@ async function spigetDownloadResourceJar(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}/download`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.10' }, redirect: 'follow' });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`Spiget download HTTP ${res.status}`);
   const buf = await res.buffer();
   if (!buf?.length) throw new Error('Empty download');
@@ -2226,6 +2335,11 @@ async function spigetDownloadResourceJar(resourceId) {
 // CurseForge removed
 
 async function getProjectVersions(projectId, mcVersion, loader, loaders = null) {
+  if (String(projectId || '').startsWith('cf-')) {
+    const cfModId = String(projectId).slice(3);
+    const l = loader || (Array.isArray(loaders) && loaders[0]) || null;
+    return await getCurseforgeProjectVersions(cfModId, mcVersion, l);
+  }
   try {
     let url = `https://api.modrinth.com/v2/project/${projectId}/version`;
     const params = [];
@@ -2240,7 +2354,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
     if (params.length) url += '?' + params.join('&');
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.10' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
     });
     return await res.json();
   } catch (e) {
@@ -2249,7 +2363,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
 }
 
 // ----- Modrinth dependency auto-install -----
-const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.0.10' };
+const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.1.0' };
 const __mrProjectCache = new Map(); // projectId -> { at, data }
 
 async function fetchModrinthProjectCached(projectId) {
@@ -2396,7 +2510,7 @@ function safeJoinUnderInstanceRoot(instanceRoot, relPath) {
 async function fetchLatestFabricLoaderForMc(mcVersion) {
   try {
     const res = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`, {
-      headers: { 'User-Agent': 'ZenonClient/1.0.10' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -2416,7 +2530,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
     const file = versionData.files.find((f) => f.primary) || versionData.files[0];
     if (!file || !file.url) throw new Error('No modpack file on this version');
 
-    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
     if (!packRes.ok) throw new Error(`Download failed (HTTP ${packRes.status})`);
     const buffer = await packRes.buffer();
 
@@ -2472,7 +2586,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!rel || !Array.isArray(f.downloads) || !f.downloads[0]) continue;
       const dest = safeJoinUnderInstanceRoot(root, rel);
       fs.ensureDirSync(path.dirname(dest));
-      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
       if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
       const chunk = await fr.buffer();
       fs.writeFileSync(dest, chunk);
@@ -2535,9 +2649,9 @@ async function downloadProjectFile(instanceId, kind, versionData, meta = null) {
       }
     } catch (e2) {}
 
-    // Auto-install required Modrinth dependencies alongside the mod.
+    // Auto-install required Modrinth dependencies alongside the mod (Modrinth only).
     let deps = null;
-    if (String(kind || '').toLowerCase() === 'mod') {
+    if (String(kind || '').toLowerCase() === 'mod' && !(versionData && versionData._cf)) {
       try {
         const cfg = readInstanceConfig(instanceId);
         const mcVersion = cfg?.version || '';
@@ -2584,7 +2698,7 @@ async function fetchSignedTexturesProperty(uuid) {
   const noDashes = id.replace(/-/g, '');
   try {
     const url = `https://sessionserver.mojang.com/session/minecraft/profile/${encodeURIComponent(noDashes)}?unsigned=false`;
-    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.0.10' } });
+    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
     if (!res.ok) return null;
     const j = await res.json();
     const props = Array.isArray(j?.properties) ? j.properties : [];
@@ -3217,6 +3331,7 @@ ipcMain.handle('toggle-mod', (_, { instanceId, filename }) => toggleMod(instance
 ipcMain.handle('delete-mod', (_, { instanceId, filename }) => deleteMod(instanceId, filename));
 
 ipcMain.handle('search-modrinth', (_, params) => searchModrinth(params));
+ipcMain.handle('search-curseforge', (_, params) => searchCurseforge(params));
 ipcMain.handle('get-mod-versions', (_, opts) => getProjectVersions(opts.projectId, opts.mcVersion, opts.loader, opts.loaders || null));
 ipcMain.handle('download-mod', (_, { instanceId, versionData, meta }) => downloadProjectFile(instanceId, 'mod', versionData, meta || null));
 
@@ -3442,6 +3557,398 @@ ipcMain.handle('server-accept-eula', async (_, serverId) => {
     return ok ? { success: true } : { success: false, error: 'Could not write eula.txt' };
   } catch (e) {
     return { success: false, error: e.message };
+  }
+});
+
+// ===== Skins: library storage + Mojang profile sync =====
+const SKIN_VARIANTS = ['CLASSIC', 'SLIM'];
+
+function loadSkinLibrary() {
+  try {
+    if (!fs.existsSync(SKIN_LIBRARY_FILE)) return [];
+    const j = JSON.parse(fs.readFileSync(SKIN_LIBRARY_FILE, 'utf8'));
+    return Array.isArray(j) ? j : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveSkinLibrary(entries) {
+  fs.writeFileSync(SKIN_LIBRARY_FILE, JSON.stringify(entries, null, 2));
+}
+
+function skinFilePath(id) {
+  return path.join(SKINS_DIR, `${id}.png`);
+}
+
+// ===== Seed Mojang's official default skins into the library (first run only) =====
+// Nine defaults, one entry each — arm model is a user toggle (Auto/Classic/Slim), so we don't seed both variants.
+// Textures are extracted from the user's own legally-obtained Minecraft client jar at runtime — nothing is redistributed.
+const SKIN_DEFAULTS_V2_MARKER = path.join(SKINS_DIR, '.defaults-seeded-v2');
+const SKIN_V1_MIGRATION_MARKER = path.join(SKINS_DIR, '.defaults-v1-migrated');
+let __defaultsSeededThisRun = false;
+const DEFAULT_SKIN_NAMES = ['steve', 'alex', 'sunny', 'efe', 'zuri', 'noor', 'ari', 'makena', 'kai'];
+const capName = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const DEFAULT_SKIN_ENTRIES = DEFAULT_SKIN_NAMES.map((n) => ({
+  file: `assets/minecraft/textures/entity/player/wide/${n}.png`,
+  name: capName(n),
+  variant: 'DEFAULT'
+}));
+const V1_DEFAULT_NAMES = new Set([
+  ...DEFAULT_SKIN_NAMES.map((n) => `${capName(n)} (Classic)`),
+  ...DEFAULT_SKIN_NAMES.map((n) => `${capName(n)} (Slim)`)
+]);
+
+function findVanillaJarCandidates() {
+  const roots = [
+    process.env.APPDATA && path.join(process.env.APPDATA, 'zenon-client', 'instances'),
+    process.env.APPDATA && path.join(process.env.APPDATA, 'com.zenon.client', 'instances'),
+    process.env.APPDATA && path.join(process.env.APPDATA, '.minecraft', 'versions')
+  ].filter(Boolean);
+  const candidates = [];
+  const walk = (dir, depth) => {
+    if (depth > 5) return;
+    let items = [];
+    try { items = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const it of items) {
+      const full = path.join(dir, it.name);
+      try {
+        if (it.isDirectory()) {
+          const n = it.name.toLowerCase();
+          if (n === '.fabric' || n === 'cache' || n === 'node_modules' || n === 'mods') continue; // skip derived/mod jars
+          walk(full, depth + 1);
+        } else if (it.isFile() && it.name.toLowerCase().endsWith('.jar')) {
+          // Prefer the standard version layout: <root>/<uuid>/versions/<v>/<v>.jar and <root>/<v>/<v>.jar
+          const inVersions = /versions[\\/]/.test(full);
+          candidates.push({ p: full, mtime: fs.statSync(full).mtimeMs, inVersions });
+        }
+      } catch (e) {}
+    }
+  };
+  for (const r of roots) { try { walk(r, 0); } catch (e) {} }
+  const preferred = candidates.filter(c => c.inVersions);
+  const pool = preferred.length ? preferred : candidates;
+  pool.sort((a, b) => b.mtime - a.mtime);
+  return pool.slice(0, 8);
+}
+
+async function seedDefaultSkinsOnce() {
+  if (__defaultsSeededThisRun) return;
+  __defaultsSeededThisRun = true;
+  try {
+    // Migration: drop the earlier Classic/Slim-split defaults (user-added skins are untouched)
+    if (!fs.existsSync(SKIN_V1_MIGRATION_MARKER)) {
+      try {
+        const lib = loadSkinLibrary().filter((s) => !V1_DEFAULT_NAMES.has(String(s?.name)));
+        saveSkinLibrary(lib);
+        fs.writeFileSync(SKIN_V1_MIGRATION_MARKER, new Date().toISOString());
+      } catch (e) {}
+    }
+    if (fs.existsSync(SKIN_DEFAULTS_V2_MARKER)) return;
+    const AdmZip = require('adm-zip');
+    for (const { p } of findVanillaJarCandidates()) {
+      let zip = null;
+      try { zip = new AdmZip(p); } catch (e) { continue; }
+      const extracted = [];
+      let ok = true;
+      try {
+        for (const e of DEFAULT_SKIN_ENTRIES) {
+          const ze = zip.getEntry(e.file);
+          if (!ze) { ok = false; break; }
+          extracted.push({ ...e, buf: ze.getData() });
+        }
+      } catch (e) { ok = false; }
+      if (!ok) continue; // modern-format jars only; try next candidate
+      const entriesToWrite = extracted.filter((e) => isValidSkinPng(e.buf));
+      if (entriesToWrite.length === 0) continue;
+      const library = loadSkinLibrary();
+      const base = Date.now();
+      entriesToWrite.forEach((e, i) => {
+        const id = uuidv4();
+        try {
+          fs.writeFileSync(skinFilePath(id), e.buf);
+          library.push({
+            id,
+            name: e.name,
+            variant: e.variant,
+            width: 64,
+            height: 64,
+            addedAt: new Date(base + i).toISOString(),
+            builtin: true
+          });
+        } catch (err) {}
+      });
+      saveSkinLibrary(library);
+      fs.writeFileSync(SKIN_DEFAULTS_V2_MARKER, new Date().toISOString());
+      return;
+    }
+  } catch (e) { /* non-fatal — library just starts empty */ }
+}
+
+function isValidSkinPng(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 200) return null;
+  // PNG magic
+  const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (buffer.compare(PNG_MAGIC, 0, 8, 0, 8) !== 0) return null;
+  const width = buffer.readUInt32BE(16);
+  const height = buffer.readUInt32BE(20);
+  // Minecraft skin canvases: legacy 64x32, modern 64x64; 2x 128x64/128x128 also accepted
+  const okDims =
+    (width === 64 && (height === 64 || height === 32)) ||
+    (width === 128 && (height === 128 || height === 64));
+  if (!okDims) return null;
+  return { width, height };
+}
+
+function readSkinEntryWithData(entry) {
+  try {
+    const p = skinFilePath(entry.id);
+    if (!fs.existsSync(p)) return { ...entry, missing: true };
+    const buf = fs.readFileSync(p);
+    return { ...entry, dataUrl: `data:image/png;base64,${buf.toString('base64')}` };
+  } catch (e) {
+    return { ...entry, missing: true };
+  }
+}
+
+async function sleepMs(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/** Friendly, actionable message for the common Mojang failure modes (esp. 429). */
+function skinMojangHttpError(status) {
+  if (status === 429) return 'Mojang is rate-limiting right now — wait a minute and try again.';
+  if (status === 401 || status === 403) return 'Your Microsoft session was rejected — sign out and back in.';
+  if (status >= 500 && status < 600) return `Mojang is having issues right now (HTTP ${status}) — try again shortly.`;
+  return `HTTP ${status}`;
+}
+
+/** GET with retry + backoff on 429 / 5xx. Honors Retry-After (capped). */
+async function fetchWithRetry(fetchImpl, url, opts = {}, retries = 2) {
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetchImpl(url, opts);
+    if (res.ok) return res;
+    const retryable = res.status === 429 || (res.status >= 500 && res.status < 600);
+    if (!retryable || attempt === retries) return res;
+    const retryAfterRaw = String((res.headers && res.headers.get && res.headers.get('retry-after')) || '').trim();
+    const retryAfter = Number(retryAfterRaw) || 0;
+    const wait = retryAfter > 0 ? Math.min(5000, retryAfter * 1000) : Math.min(5000, 350 * Math.pow(2, attempt));
+    await sleepMs(wait);
+  }
+}
+
+const MOJANG_PROFILE_CACHE_TTL_MS = 90 * 1000;
+let __mojangProfileCache = { at: 0, data: null };
+
+async function fetchMinecraftProfileSkins(force = false) {
+  const cached = __mojangProfileCache;
+  if (!force && cached.data && Date.now() - cached.at < MOJANG_PROFILE_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const settings = loadSettings();
+  const token = settings?.auth?.minecraft?.accessToken;
+  if (!token) return { success: false, error: 'Not signed in with Microsoft.' };
+  const res = await fetchWithRetry(nativeFetch, 'https://api.minecraftservices.com/minecraft/profile', {
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'ZenonClient/1.1.0' }
+  }, 2);
+  if (!res.ok) return { success: false, error: skinMojangHttpError(res.status) };
+  const j = await res.json();
+  const skins = Array.isArray(j?.skins) ? j.skins : [];
+  const active = skins.find((s) => s && s.state === 'ACTIVE') || skins[0] || null;
+  const out = {
+    success: true,
+    profile: {
+      id: j?.id || null,
+      name: j?.name || null,
+      skins,
+      active: active
+        ? {
+            id: active.id || null,
+            url: active.url || null,
+            variant: active.variant || 'CLASSIC',
+            textureKey: active.textureKey || null
+          }
+        : null
+    }
+  };
+  __mojangProfileCache = { at: Date.now(), data: out };
+  return out;
+}
+
+async function downloadSkinToFile(url, destPath) {
+  const u = String(url || '').trim();
+  if (!u) throw new Error('Missing skin URL');
+  const res = await fetchWithRetry(fetch, u, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } }, 2);
+  if (!res.ok) throw new Error(skinMojangHttpError(res.status));
+  const buf = await res.buffer();
+  fs.writeFileSync(destPath, buf);
+  return buf;
+}
+
+ipcMain.handle('skin:get-profile', async (_, opts) => {
+  try {
+    return await fetchMinecraftProfileSkins(!!(opts && opts.force));
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:list-library', async () => {
+  try {
+    await seedDefaultSkinsOnce();
+    const entries = loadSkinLibrary();
+    return { success: true, skins: entries.map(readSkinEntryWithData) };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:add-to-library', async (_, data = {}) => {
+  try {
+    const name = String(data?.name || 'Untitled skin').trim().slice(0, 80) || 'Untitled skin';
+    const variant = SKIN_VARIANTS.includes(String(data?.variant || '').toUpperCase())
+      ? String(data.variant).toUpperCase()
+      : 'CLASSIC';
+    const raw = String(data?.base64 || '');
+    if (!raw) return { success: false, error: 'No skin image provided' };
+    const buf = Buffer.from(raw, 'base64');
+    const dims = isValidSkinPng(buf);
+    if (!dims) return { success: false, error: 'Not a valid Minecraft skin PNG (expected 64x32 or 64x64)' };
+    const id = uuidv4();
+    fs.writeFileSync(skinFilePath(id), buf);
+    const entry = { id, name, variant, width: dims.width, height: dims.height, addedAt: new Date().toISOString() };
+    const library = loadSkinLibrary();
+    library.push(entry);
+    saveSkinLibrary(library);
+    return { success: true, skin: readSkinEntryWithData(entry) };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:save-current-to-library', async (_, data = {}) => {
+  try {
+    const name = String(data?.name || 'My current skin').trim().slice(0, 80) || 'My current skin';
+    const variant = SKIN_VARIANTS.includes(String(data?.variant || '').toUpperCase())
+      ? String(data.variant).toUpperCase()
+      : 'CLASSIC';
+    const url = String(data?.url || '').trim();
+    if (!url) return { success: false, error: 'Missing skin URL' };
+    const id = uuidv4();
+    const buf = await downloadSkinToFile(url, skinFilePath(id));
+    const dims = isValidSkinPng(buf);
+    if (!dims) {
+      try { fs.removeSync(skinFilePath(id)); } catch (e) {}
+      return { success: false, error: 'Downloaded image is not a valid Minecraft skin PNG' };
+    }
+    const entry = { id, name, variant, width: dims.width, height: dims.height, addedAt: new Date().toISOString() };
+    const library = loadSkinLibrary();
+    library.push(entry);
+    saveSkinLibrary(library);
+    return { success: true, skin: readSkinEntryWithData(entry) };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:remove-from-library', async (_, id) => {
+  try {
+    const sid = String(id || '').trim();
+    if (!sid) return { success: false, error: 'Missing skin id' };
+    const library = loadSkinLibrary();
+    const next = library.filter((s) => s.id !== sid);
+    try { fs.removeSync(skinFilePath(sid)); } catch (e) {}
+    saveSkinLibrary(next);
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:rename-library-skin', async (_, data = {}) => {
+  try {
+    const id = String(data?.id || '').trim();
+    const name = String(data?.name || '').trim().slice(0, 80);
+    if (!id) return { success: false, error: 'Missing skin id' };
+    if (!name) return { success: false, error: 'Name cannot be empty' };
+    const library = loadSkinLibrary();
+    const entry = library.find((s) => s.id === id);
+    if (!entry) return { success: false, error: 'Skin not found in library' };
+    entry.name = name;
+    saveSkinLibrary(library);
+    return { success: true, skin: readSkinEntryWithData(entry) };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
+  }
+});
+
+ipcMain.handle('skin:apply', async (_, data = {}) => {
+  try {
+    const settings = loadSettings();
+    const token = settings?.auth?.minecraft?.accessToken;
+    if (!token) return { success: false, error: 'Not signed in with Microsoft.' };
+    const variant = SKIN_VARIANTS.includes(String(data?.variant || '').toUpperCase())
+      ? String(data.variant).toUpperCase()
+      : 'CLASSIC';
+    let skinBuf = null;
+    let skinName = 'skin.png';
+    if (data?.source === 'library') {
+      const sid = String(data?.id || '').trim();
+      if (!sid) return { success: false, error: 'Missing skin id' };
+      const p = skinFilePath(sid);
+      if (!fs.existsSync(p)) return { success: false, error: 'Skin not found in library' };
+      skinBuf = fs.readFileSync(p);
+      skinName = `${sid}.png`;
+    } else if (data?.source === 'profile') {
+      const url = String(data?.url || '').trim();
+      if (!url) return { success: false, error: 'Missing skin URL' };
+      const res = await fetchWithRetry(fetch, url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } }, 2);
+      if (!res.ok) return { success: false, error: `${skinMojangHttpError(res.status)}` };
+      skinBuf = await res.buffer();
+    } else {
+      return { success: false, error: 'Choose a skin from your library or from your Minecraft profile.' };
+    }
+    if (!isValidSkinPng(skinBuf)) return { success: false, error: 'Not a valid Minecraft skin PNG' };
+
+    // Multipart/form-data upload to the Mojang profile skins endpoint
+    const boundary = `----zenonSkin${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`;
+    const parts = [];
+    const push = (s) => parts.push(Buffer.from(s, 'utf8'));
+    push(`--${boundary}\r\n`);
+    push('Content-Disposition: form-data; name="variant"\r\n\r\n');
+    push(`${variant.toLowerCase()}\r\n`);
+    push(`--${boundary}\r\n`);
+    push(`Content-Disposition: form-data; name="file"; filename="${skinName}"\r\nContent-Type: image/png\r\n\r\n`);
+    parts.push(skinBuf);
+    push('\r\n');
+    push(`--${boundary}--\r\n`);
+    const body = Buffer.concat(parts);
+
+    const res = await nativeFetch('https://api.minecraftservices.com/minecraft/profile/skins', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': `multipart/form-data; boundary=${boundary}`,
+        'Content-Length': String(body.length),
+        'User-Agent': 'ZenonClient/1.1.0'
+      },
+      body
+    });
+    const text = await res.text();
+    let j = null;
+    try { j = JSON.parse(text); } catch (e) {}
+    if (!res.ok) {
+      if (res.status === 429 || (res.status >= 500 && res.status < 600)) {
+        return { success: false, error: skinMojangHttpError(res.status) };
+      }
+      const msg = j?.errorMessage || j?.error || `HTTP ${res.status}`;
+      return { success: false, error: String(msg).slice(0, 220) };
+    }
+    // Fetch the fresh profile so the UI has the ACTIVE skin URL (and refresh the cache)
+    const fresh = await fetchMinecraftProfileSkins(true);
+    return { success: true, variant, profile: fresh?.profile || null };
+  } catch (e) {
+    return { success: false, error: e.message || String(e) };
   }
 });
 

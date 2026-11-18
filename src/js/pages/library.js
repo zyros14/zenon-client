@@ -1,11 +1,16 @@
-// ===== Instance Library (installed content + detail layout) =====
+﻿// ===== Instance Library (installed content + detail layout) =====
 let libraryContentKind = 'mod';
 let librarySearchFilter = '';
 let libraryBrowseQuery = '';
 let libraryBrowseTimer = null;
 let libraryBrowseOffset = 0;
+let __libraryBrowseSeq = 0; // bump per search so stale in-flight searches can't overwrite newer results
 /** Active category while the Modrinth browse modal is open (synced to the library tab on close). */
 let libraryBrowseModalKind = 'mod';
+// 'modrinth' | 'curseforge' (instance-scoped browse source)
+let libraryBrowseSource = 'modrinth';
+try { libraryBrowseSource = localStorage.getItem('zenon-library-browse-source') || 'modrinth'; } catch (e) { libraryBrowseSource = 'modrinth'; }
+if (libraryBrowseSource !== 'modrinth' && libraryBrowseSource !== 'curseforge') libraryBrowseSource = 'modrinth';
 const LIBRARY_BROWSE_PAGE_SIZE = 18;
 let __libraryRenderSeq = 0;
 
@@ -105,25 +110,39 @@ function browseModalHint(kind) {
 }
 
 function browseSearchPlaceholder(kind) {
-  if (kind === 'shaderpack') return 'Search shaders…';
-  if (kind === 'resourcepack') return 'Search resource packs…';
-  if (kind === 'datapack') return 'Search data packs…';
-  if (kind === 'modpack') return 'Search modpacks…';
-  return 'Search Modrinth mods…';
+  const src = libraryBrowseSource === 'curseforge' ? 'CurseForge' : 'Modrinth';
+  if (kind === 'shaderpack') return `Search ${src} shaders…`;
+  if (kind === 'resourcepack') return `Search ${src} resource packs…`;
+  if (kind === 'datapack') return `Search ${src} data packs…`;
+  if (kind === 'modpack') return 'Search Modrinth modpacks…';
+  return `Search ${src} mods…`;
 }
 
 function renderLibraryBrowseKindPills() {
   const el = document.getElementById('library-browse-kind-pills');
   if (!el) return;
   el.innerHTML = LIBRARY_CONTENT_KINDS.map(
-    (k) =>
-      `<button type="button" role="tab" aria-selected="${k.kind === libraryBrowseModalKind ? 'true' : 'false'}" class="id-pill ${k.kind === libraryBrowseModalKind ? 'active' : ''}" data-browse-kind="${k.kind}">${k.label}</button>`
+    (k) => {
+      const cfModpack = libraryBrowseSource === 'curseforge' && k.kind === 'modpack';
+      return `<button type="button" role="tab" aria-selected="${k.kind === libraryBrowseModalKind ? 'true' : 'false'}" class="id-pill ${k.kind === libraryBrowseModalKind ? 'active' : ''} ${cfModpack ? 'is-disabled' : ''}" data-browse-kind="${k.kind}" ${cfModpack ? 'aria-disabled="true" title="CurseForge modpacks are not supported yet"' : ''}>${k.label}</button>`;
+    }
   ).join('');
+}
+
+function renderLibraryBrowseSourceRow() {
+  const el = document.getElementById('library-browse-source-row');
+  if (!el) return;
+  el.querySelectorAll('[data-browse-source]').forEach((btn) => {
+    const active = btn.getAttribute('data-browse-source') === libraryBrowseSource;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-selected', String(active));
+  });
 }
 
 function updateLibraryBrowseModalChrome(inst) {
   if (!inst) return;
   const kind = libraryBrowseModalKind;
+  renderLibraryBrowseSourceRow();
   const tabLabel = LIBRARY_CONTENT_KINDS.find((k) => k.kind === kind)?.label || 'Content';
   const titleEl = document.getElementById('library-browse-modal-title');
   const hintEl = document.getElementById('library-browse-modal-hint');
@@ -139,7 +158,7 @@ function syncLibraryBrowseModalToMain() {
   libraryContentKind = libraryBrowseModalKind;
   window.__libraryBrowseRefresh = null;
   window.__onLibraryBrowseModalClose = null;
-  if (State.currentPage === 'library') void renderLibrary();
+  if (State.currentPage === 'instance') void renderLibrary();
 }
 
 function loaderLabel(loader) {
@@ -158,7 +177,7 @@ async function renderLibrary() {
   const seq = ++__libraryRenderSeq;
   const content = document.getElementById('main-content');
 
-  // Always show all instances in the Library (left column), and show the selected instance's content on the right.
+  // Load instances; the Library page shows the SELECTED instance only (instance picker lives on the Instances page).
   if (!State.instances || State.instances.length === 0) {
     try {
       State.instances = await window.zenon.getInstances();
@@ -168,23 +187,6 @@ async function renderLibrary() {
     }
   }
   if (seq !== __libraryRenderSeq) return;
-
-  const instances = State.instances || [];
-  const selectedId = State.selectedInstance?.id || '';
-  const instListHtml = instances.length
-    ? instances
-        .map((i) => {
-          const active = selectedId && i.id === selectedId;
-          return `<button type="button" class="btn btn-ghost library-inst-row ${active ? 'active' : ''}" data-inst="${escapeHtml(i.id)}">
-            <span class="library-inst-icon">${getInstanceIcon(i)}</span>
-            <span class="library-inst-main">
-              <span class="library-inst-name">${escapeHtml(i.name || 'Instance')}</span>
-              <span class="library-inst-meta">${escapeHtml(loaderLabel(i.loader))} ${escapeHtml(i.version || '')}</span>
-            </span>
-          </button>`;
-        })
-        .join('')
-    : `<div class="empty-inline">No instances yet.</div>`;
 
   const inst = State.selectedInstance;
   const pane = State.libraryPane || 'content';
@@ -213,7 +215,33 @@ async function renderLibrary() {
       })
       : items;
 
+    const totalBytes = filtered.reduce((sum, m) => sum + (Number(m.size) || 0), 0);
+    const enabledCount = filtered.filter((m) => m.enabled).length;
+    const disabledCount = filtered.length - enabledCount;
+    const kindLabel = LIBRARY_CONTENT_KINDS.find((k) => k.kind === libraryContentKind)?.label || 'Mods';
+
     paneBody = `
+      <div class="library-summary glow-card">
+        <div class="library-summary-icon">${getInstanceIcon(inst)}</div>
+        <div class="library-summary-body">
+          <div class="library-summary-kicker">${escapeHtml(kindLabel).toUpperCase()} &nbsp;·&nbsp; ${escapeHtml(inst.loader || 'vanilla')}</div>
+          <h2 class="library-summary-title">${escapeHtml(inst.name)}</h2>
+          <div class="library-summary-chips">
+            <span class="chip chip-accent">${escapeHtml(inst.version || '')}</span>
+            <span class="chip" id="library-summary-modcount">${filtered.length} ${escapeHtml(kindLabel.toLowerCase())}${filtered.length === 1 ? '' : 's'}</span>
+            <span class="chip" id="library-summary-size">${formatBytes(totalBytes)}</span>
+            <span class="chip chip-on" id="library-summary-enabled">${enabledCount} on</span>
+            <span class="chip chip-off" id="library-summary-disabled">${disabledCount} off</span>
+          </div>
+        </div>
+        <div class="library-summary-actions">
+          <button type="button" class="btn btn-primary btn-lg btn-browse-install" id="library-open-browse-btn" title="Search Modrinth/CurseForge scoped to this instance">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:17px;height:17px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Browse &amp; install
+          </button>
+        </div>
+      </div>
+
       <div class="id-content-toolbar library-content-toolbar-row">
         <div class="id-kind-pills" id="library-kind-pills">
           ${LIBRARY_CONTENT_KINDS.map(
@@ -222,10 +250,6 @@ async function renderLibrary() {
           `
           ).join('')}
         </div>
-        <button type="button" class="btn btn-primary btn-browse-install" id="library-open-browse-btn" title="Search Modrinth scoped to this instance">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          Browse &amp; install
-        </button>
       </div>
 
       <div class="id-toolbar-actions library-installed-toolbar">
@@ -294,19 +318,7 @@ async function renderLibrary() {
   if (seq !== __libraryRenderSeq) return;
   content.innerHTML = `
     <div class="page page-instance-detail">
-      <div class="library-content-split">
-        <aside class="library-browse-col">
-          <div class="library-browse-head">
-            <div class="library-browse-title">Instances</div>
-            <div class="library-browse-sub">Pick one to view its library.</div>
-          </div>
-          <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-            <button type="button" class="btn btn-primary btn-sm" id="library-new-instance-left">New Instance</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="library-manage-instances-left">Manage</button>
-          </div>
-          <div class="id-files-list" id="library-instances-list">${instListHtml}</div>
-        </aside>
-
+      <div class="library-content-split library-content-split--full">
         <section class="library-right-col">
           ${
             inst
@@ -354,28 +366,9 @@ async function renderLibrary() {
     </div>
   `;
 
-  document.getElementById('library-new-instance-left')?.addEventListener('click', () => {
-    if (typeof openCreateInstanceModal === 'function') openCreateInstanceModal();
-    else navigateTo('instances');
-  });
-  document.getElementById('library-manage-instances-left')?.addEventListener('click', () => navigateTo('instances'));
   document.getElementById('library-create-instance-btn')?.addEventListener('click', () => {
     if (typeof openCreateInstanceModal === 'function') openCreateInstanceModal();
     else navigateTo('instances');
-  });
-
-  document.getElementById('library-instances-list')?.addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-inst]');
-    if (!btn) return;
-    const id = btn.getAttribute('data-inst');
-    const hit = (State.instances || []).find((x) => x.id === id);
-    if (!hit) return;
-    State.selectedInstance = hit;
-    if (typeof updateSidebarBadge === 'function') updateSidebarBadge();
-    librarySearchFilter = '';
-    libraryBrowseQuery = '';
-    State.libraryPane = 'content';
-    await renderLibrary();
   });
 
   document.querySelector('[data-action="play"]')?.addEventListener('click', (e) => {
@@ -467,35 +460,43 @@ async function runLibraryBrowseSearch(offset) {
   if (!resultsEl || !inst || !modal?.classList.contains('show')) return;
 
   if (typeof offset === 'number') libraryBrowseOffset = offset;
+  const seq = ++__libraryBrowseSeq;
 
   const def = libraryBrowseDef();
+  const isCf = libraryBrowseSource === 'curseforge';
   const loader = def.projectType === 'mod' ? instanceModrinthFacetLoader(inst) : '';
 
   resultsEl.innerHTML = '<div class="loading-spinner"></div>';
   const pagerEl = document.getElementById('library-browse-pager');
   if (pagerEl) pagerEl.style.display = 'none';
 
-  const data = await window.zenon.searchModrinth({
+  const searchParams = {
     query: libraryBrowseQuery,
     version: inst.version,
     loader,
     projectType: def.projectType,
     limit: LIBRARY_BROWSE_PAGE_SIZE,
     offset: libraryBrowseOffset
-  });
+  };
+  const data = isCf
+    ? await window.zenon.searchCurseforge(searchParams)
+    : await window.zenon.searchModrinth(searchParams);
+  if (seq !== __libraryBrowseSeq) return; // A newer search started — drop this stale response.
+  const hits = data.hits || [];
+  const total = data.total_hits != null ? data.total_hits : hits.length;
+  const searchError = data.error || '';
 
-  const total = data.total_hits != null ? data.total_hits : (data.hits || []).length;
-
-  if (!data.hits || data.hits.length === 0) {
+  if (hits.length === 0) {
     if (pagerEl) {
       pagerEl.style.display = 'none';
       pagerEl.innerHTML = '';
     }
-    resultsEl.innerHTML = '<div class="empty-inline discovery-hint">No hits — try other keywords.</div>';
+    const msg = searchError ? escapeHtml(searchError) : 'No hits — try other keywords.';
+    resultsEl.innerHTML = `<div class="empty-inline discovery-hint">${msg}</div>`;
     return;
   }
 
-  resultsEl.innerHTML = `<div class="library-browse-grid">${data.hits
+  resultsEl.innerHTML = `<div class="library-browse-grid">${hits
     .map((mod) => {
       const initial = (mod.title || '?').charAt(0);
       const iconBlock = mod.icon_url
@@ -530,6 +531,7 @@ function openLibraryBrowseModal() {
   if (!inst || State.libraryPane !== 'content') return;
 
   libraryBrowseModalKind = libraryContentKind;
+  if (libraryBrowseSource === 'curseforge' && libraryBrowseModalKind === 'modpack') libraryBrowseModalKind = 'mod';
   updateLibraryBrowseModalChrome(inst);
   renderLibraryBrowseKindPills();
 
@@ -538,9 +540,31 @@ function openLibraryBrowseModal() {
     pills.onclick = (e) => {
       const pill = e.target.closest('[data-browse-kind]');
       if (!pill) return;
+      if (pill.getAttribute('aria-disabled') === 'true') {
+        showToast('CurseForge modpacks are not supported yet — switch to Modrinth or another tab.', 'info', 3500);
+        return;
+      }
       const next = pill.dataset.browseKind;
       if (!next || next === libraryBrowseModalKind) return;
       libraryBrowseModalKind = next;
+      renderLibraryBrowseKindPills();
+      updateLibraryBrowseModalChrome(inst);
+      libraryBrowseOffset = 0;
+      runLibraryBrowseSearch(0);
+    };
+  }
+
+  const sourceRow = document.getElementById('library-browse-source-row');
+  if (sourceRow) {
+    sourceRow.onclick = (e) => {
+      const btn = e.target.closest('[data-browse-source]');
+      if (!btn) return;
+      const next = btn.getAttribute('data-browse-source') === 'curseforge' ? 'curseforge' : 'modrinth';
+      if (next === libraryBrowseSource) return;
+      libraryBrowseSource = next;
+      try { localStorage.setItem('zenon-library-browse-source', next); } catch (_) {}
+      // CurseForge has no modpack support here — bounce back to Mods if modpacks were selected.
+      if (next === 'curseforge' && libraryBrowseModalKind === 'modpack') libraryBrowseModalKind = 'mod';
       renderLibraryBrowseKindPills();
       updateLibraryBrowseModalChrome(inst);
       libraryBrowseOffset = 0;
@@ -574,7 +598,7 @@ function openLibraryBrowseModal() {
 
 function renderInstalledRows(items) {
   if (!items.length) {
-    return `<div class="empty-inline id-table-empty">Nothing installed yet. Use <strong>Browse &amp; install</strong> to add from Modrinth.</div>`;
+    return `<div class="empty-inline id-table-empty">Nothing installed yet. Use <strong>Browse &amp; install</strong> to add from Modrinth or CurseForge.</div>`;
   }
   // Reuse Discovery card layout so installed content matches Discovery visuals.
   return `<div class="discovery-grid">${items.map((mod) => renderInstalledCard(mod)).join('')}</div>`;
@@ -595,22 +619,27 @@ function renderInstalledCard(mod) {
   const rawTitle = String(mod.title || '').trim() || String(mod.displayName || '').trim() || guessTitleFromFilename() || String(mod.filename || '').trim() || 'Project';
   const initial = rawTitle.charAt(0) || '?';
   const iconBlock = mod.iconUrl
-    ? `<img class="discovery-card-icon" src="${escapeHtml(mod.iconUrl)}" alt="" onerror="this.outerHTML='<div class=\\'discovery-card-icon-ph\\'>${escapeHtml(initial)}</div>'">`
-    : `<div class="discovery-card-icon-ph">${escapeHtml(initial)}</div>`;
+    ? `<img class="discovery-card-icon library-mod-icon" src="${escapeHtml(mod.iconUrl)}" alt="" onerror="this.outerHTML='<div class=\'discovery-card-icon-ph library-mod-icon\'>${escapeHtml(initial)}</div>'">`
+    : `<div class="discovery-card-icon-ph library-mod-icon">${escapeHtml(initial)}</div>`;
 
   const maker = String(mod.author || '').trim() || 'Unknown';
   const file = String(mod.filename || '').trim();
-  const fileLine = file ? `${file}${mod.size ? ` \u2022 ${formatBytes(mod.size)}` : ''}` : (mod.size ? formatBytes(mod.size) : '');
+  const sizeText = mod.size ? formatBytes(mod.size) : '';
+
   return `
-    <article class="discovery-card glow-card ${mod.enabled ? '': 'disabled'}" data-filename="${escapeHtml(mod.filename)}">
-      <div class="discovery-card-top">
+    <article class="discovery-card glow-card library-mod-card ${mod.enabled ? '': 'disabled'}" data-filename="${escapeHtml(mod.filename)}">
+      <div class="library-mod-top">
         ${iconBlock}
-        <div class="discovery-card-text">
+        <div class="library-mod-body">
           <h3 class="discovery-card-title">${escapeHtml(rawTitle)}</h3>
           <p class="discovery-card-author">${escapeHtml(maker)}</p>
+          <div class="library-mod-chips">
+            ${sizeText ? `<span class="chip chip-mini">${escapeHtml(sizeText)}</span>` : ''}
+            <span class="chip chip-mini ${mod.enabled ? 'chip-on' : 'chip-off'}">${mod.enabled ? 'Active' : 'Disabled'}</span>
+          </div>
         </div>
       </div>
-      <p class="discovery-card-desc">${escapeHtml(fileLine)}</p>
+      <p class="library-mod-file" title="${escapeHtml(file)}">${escapeHtml(file)}</p>
       <div class="library-installed-actions">
         <button type="button" class="mod-toggle ${mod.enabled ? 'on' : ''}" data-action="toggle" data-filename="${escapeHtml(mod.filename)}" title="Enable / disable"></button>
         <button type="button" class="btn btn-danger btn-sm btn-icon" data-action="delete-mod" data-filename="${escapeHtml(mod.filename)}" title="Remove">
@@ -634,9 +663,23 @@ async function refreshLibraryInstalledTableOnly() {
       );
     })
     : items;
-  const body = document.getElementById('library-installed-body');
-  if (body) body.innerHTML = renderInstalledRows(filtered);
-  attachLibraryInstalledHandlers();
+  const onlyBody = document.getElementById('library-installed-body');
+  if (onlyBody) {
+    onlyBody.innerHTML = renderInstalledRows(filtered);
+  }
+  // Keep the summary strip live with the grid.
+  const totalBytes = items.reduce((sum, m) => sum + (Number(m.size) || 0), 0);
+  const enabledCount = items.filter((m) => m.enabled).length;
+  const kindLabel = LIBRARY_CONTENT_KINDS.find((k) => k.kind === libraryContentKind)?.label || 'Mods';
+  const modcount = document.getElementById('library-summary-modcount');
+  const sizeEl = document.getElementById('library-summary-size');
+  const onEl = document.getElementById('library-summary-enabled');
+  const offEl = document.getElementById('library-summary-disabled');
+  if (modcount) modcount.textContent = `${items.length} ${kindLabel.toLowerCase()}${items.length === 1 ? '' : 's'}`;
+  if (sizeEl) sizeEl.textContent = formatBytes(totalBytes);
+  if (onEl) onEl.textContent = `${enabledCount} on`;
+  if (offEl) offEl.textContent = `${items.length - enabledCount} off`;
+  if (onlyBody) attachLibraryInstalledHandlers();
 }
 
 async function onLibraryInstalledClick(e) {
@@ -662,7 +705,7 @@ async function onLibraryInstalledClick(e) {
     await window.zenon.deleteContent(inst.id, libraryContentKind, filename);
     showToast('Removed', 'info');
     // Keep user anchored on Library after delete.
-    await navigateTo('library', { force: true });
+    await navigateTo('instance', { force: true });
   }
 }
 
@@ -770,10 +813,10 @@ async function zenonOpenInstallModal(projectId, title, contentKind, versionQuery
         // After creating a modpack instance, always land in Library.
         if (modpackAsNewInstance) {
           State.libraryPane = 'content';
-          await navigateTo('library', { force: true });
+          await navigateTo('instance', { force: true });
           return;
         }
-        if (State.currentPage === 'library') {
+        if (State.currentPage === 'instance') {
           await refreshLibraryInstalledTableOnly();
           const br = window.__libraryBrowseRefresh;
           if (typeof br === 'function') br();

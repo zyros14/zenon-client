@@ -2,6 +2,40 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.0] - 2026-11-18
+
+### Highlights
+- **Wardrobe: your skins, in 3D, in one place.** New page to see your Minecraft skin rendered in 3D (Idle, Walk, Run, Wave, Crouch), browse and keep a local skin library, and apply any of them straight from the app — one click, no extra dialogs.
+- **All 9 default Minecraft skins** are seeded into your library on first launch (from your local client jar). Manage them alongside your own skins in two tabs: Mine / Defaults.
+- **CurseForge in Discovery.** Zenon can now browse and install from CurseForge next to Modrinth — via a server-side Vercel proxy, so no API keys are ever shipped in the client.
+
+### Added
+- 3D skin viewer with tailor-made idle/walk/run/crouch animations (crouch holds the pose instead of spamming the crouch toggle).
+- Skin library with 3D snapshots (live spin on hover, single shared WebGL context), rename, remove, and one-click apply to your Microsoft account. Skins are persisted locally under the userData skins folder.
+- Mine / Defaults tab split in the library; defaults are seeded once from the local vanilla client jar (Steve, Alex, Sunny, Efe, Zuri, Noor, Ari, Makena, Kai).
+- CurseForge source toggle in Discovery and in the instance Mods/Shaders/Resource Packs/Data Packs browser. Modpack installs are Modrinth-only until CF modpack support lands.
+- Sidebar reorganized into labeled sections (Menu / Hosting / Recently played) with a compact profile card at the bottom; Recently played shows your last-launched instances and opens them directly.
+- "Join Discord" button pinned to the bottom of the sidebar.
+- Library page now shows all your instances in one grid; the dedicated instance page (opened from Recents, or any instance card) shows content/files/worlds/logs and richer mod cards (size, Active/Disabled state).
+- Instance summary strip on the instance page (version, loader, counts, size, on/off chips) next to Install/Browse controls.
+
+### Fixed
+- Mojang profile fetch no longer 429s on every Refresh — the profile is cached (90 s), all GETs retry with backoff, and the post-apply profile is re-fetched fresh.
+- Skin library no longer exhausts the browser's WebGL context ceiling on large libraries (frozen snapshots + a single live hover viewer).
+- The whole-card "click to apply skin" action is now properly separated from rename/remove and no longer triggers on those controls.
+- Manual update check from 1.0.10 remains fixed.
+
+### Changed
+- Library layout split: Library = all-instances grid; instance detail page is now reachable from Recents or any instance card.
+- Sidebar grouping and bottom section simplified (compact profile card with Settings + Discord, hosting moved under Recents).
+
+### Notes
+- Windows installer is not code-signed — SmartScreen will flag it on first run ("More info → Run anyway").
+- Auto-update from 1.0.10 works: this release ships `latest.yml` and the blockmap.
+- CurseForge content is served through Zenon's Vercel proxy; the proxy code itself never ships inside the client.
+
+---
+
 ## [1.0.10] - 2026-11-18
 
 ### Fixed

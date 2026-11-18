@@ -105,6 +105,7 @@ contextBridge.exposeInMainWorld('zenon', {
 
   // Modrinth
   searchModrinth: (params) => ipcRenderer.invoke('search-modrinth', params),
+searchCurseforge: (params) => ipcRenderer.invoke('search-curseforge', params),
   getModVersions: (opts) => ipcRenderer.invoke('get-mod-versions', opts),
   getProjectVersions: (opts) => ipcRenderer.invoke('get-project-versions', opts),
   spigetSearch: (params) => ipcRenderer.invoke('spiget-search', params),
@@ -129,5 +130,14 @@ contextBridge.exposeInMainWorld('zenon', {
 
   // Tools
   openUserDataFolder: () => ipcRenderer.invoke('open-user-data-folder'),
-  openInstancesRootFolder: () => ipcRenderer.invoke('open-instances-root-folder')
+  openInstancesRootFolder: () => ipcRenderer.invoke('open-instances-root-folder'),
+
+  // Skins
+  skinGetProfile: (force) => ipcRenderer.invoke('skin:get-profile', { force: !!force }),
+  skinListLibrary: () => ipcRenderer.invoke('skin:list-library'),
+  skinAddToLibrary: (data) => ipcRenderer.invoke('skin:add-to-library', data),
+  skinSaveCurrentToLibrary: (data) => ipcRenderer.invoke('skin:save-current-to-library', data),
+  skinRenameLibrarySkin: (data) => ipcRenderer.invoke('skin:rename-library-skin', data),
+skinRemoveFromLibrary: (id) => ipcRenderer.invoke('skin:remove-from-library', id),
+  skinApply: (data) => ipcRenderer.invoke('skin:apply', data)
 });

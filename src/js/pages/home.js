@@ -1,4 +1,4 @@
-// ===== Home Page =====
+﻿// ===== Home Page =====
 async function renderHome() {
   const content = document.getElementById('main-content');
   const instances = State.instances;
@@ -167,7 +167,7 @@ async function renderHome() {
     if (State.selectedInstance) {
       launchInstance(State.selectedInstance.id);
     } else {
-      navigateTo('library', { force: true });
+      navigateTo('instance', { force: true });
       showToast('Select an instance first', 'info');
     }
   };
@@ -183,7 +183,7 @@ async function renderHome() {
 
   document.getElementById('hero-open-library')?.addEventListener('click', () => {
     State.libraryPane = 'content';
-    navigateTo('library', { force: true });
+    navigateTo('instance', { force: true });
   });
 
   document.querySelectorAll('.recent-instance-card').forEach(card => {
@@ -193,7 +193,7 @@ async function renderHome() {
         State.selectedInstance = inst;
         updateSidebarBadge();
         State.libraryPane = 'content';
-        navigateTo('library', { force: true });
+        navigateTo('instance', { force: true });
       }
     });
   });

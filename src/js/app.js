@@ -1,4 +1,4 @@
-// ===== Global App State =====
+﻿// ===== Global App State =====
 const State = {
   currentPage: 'home',
   selectedInstance: null,
@@ -96,6 +96,9 @@ async function navigateTo(page, opts = {}) {
   if (leavingHostServer && typeof window.__abandonHostServerConsole === 'function') {
     window.__abandonHostServerConsole();
   }
+  if (page !== 'skins' && typeof window.__abandonSkinViewer === 'function') {
+    window.__abandonSkinViewer();
+  }
 
   document.querySelectorAll('.nav-item').forEach(item => {
     item.classList.toggle('active', item.dataset.page === page);
@@ -112,8 +115,10 @@ async function renderPage(page) {
 
   switch (page) {
     case 'home': await renderHome(); break;
-    case 'instances': await renderInstances(); break;
-    case 'library': await renderLibrary(); break;
+    case 'instances':
+    case 'library': await renderInstances(); break;
+    case 'instance': await renderLibrary(); break;
+    case 'skins': if (typeof window.renderSkins === 'function') await window.renderSkins(); break;
     case 'discovery': await renderDiscovery(); break;
     case 'host-server': await renderHostServer(); break;
     case 'tools': await renderTools(); break;
@@ -147,17 +152,66 @@ function initReveal() {
 
 // ===== Sidebar Instance Badge =====
 function updateSidebarBadge() {
-  const badge = document.getElementById('sidebar-instance-badge');
   const nameEl = document.getElementById('sidebar-instance-name');
-  const dot = badge.querySelector('.badge-dot');
+  const dot = document.getElementById('sidebar-instance-dot');
 
   if (State.selectedInstance) {
-    nameEl.textContent = State.selectedInstance.name;
-    dot.classList.add('active');
+    if (nameEl) nameEl.textContent = State.selectedInstance.name;
+    if (dot) dot.classList.add('active');
   } else {
-    nameEl.textContent = 'No Instance';
-    dot.classList.remove('active');
+    if (nameEl) nameEl.textContent = 'No Instance';
+    if (dot) dot.classList.remove('active');
   }
+  renderSidebarRecent();
+}
+
+// ===== Sidebar: recently played instances =====
+function renderSidebarRecent() {
+  const wrap = document.getElementById('sidebar-recent');
+  const list = document.getElementById('sidebar-recent-list');
+  if (!wrap || !list) return;
+  const instances = Array.isArray(State.instances) ? State.instances : [];
+  const recent = instances
+    .filter((i) => i && i.lastPlayed)
+    .slice()
+    .sort((a, b) => new Date(b.lastPlayed || 0) - new Date(a.lastPlayed || 0))
+    .slice(0, 4);
+
+  if (recent.length === 0) {
+    wrap.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+  wrap.style.display = '';
+  const selectedId = State.selectedInstance ? State.selectedInstance.id : null;
+  list.innerHTML = recent
+    .map((inst) => {
+      const loader = String(inst.loader || 'vanilla');
+      const meta = [inst.version || '', loader !== 'vanilla' ? loader : ''].filter(Boolean).join(' · ');
+      const active = selectedId && inst.id === selectedId ? ' active' : '';
+      return `
+        <button type="button" class="sidebar-recent-item${active}" data-recent-id="${escapeHtml(inst.id)}" title="Open ${escapeHtml(inst.name || 'Instance')}">
+          <span class="sidebar-recent-icon">${getInstanceIcon(inst)}</span>
+          <span class="sidebar-recent-text">
+            <span class="sidebar-recent-name">${escapeHtml(inst.name || 'Instance')}</span>
+            <span class="sidebar-recent-meta">${escapeHtml(meta)}</span>
+          </span>
+          <span class="sidebar-recent-play" aria-hidden="true">&#8250;</span>
+        </button>`;
+    })
+    .join('');
+  list.querySelectorAll('[data-recent-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.getAttribute('data-recent-id');
+      const hit = (State.instances || []).find((x) => x.id === id);
+      if (!hit) return;
+      State.selectedInstance = hit;
+      if (typeof window.syncSelectedInstanceWithList === 'function') window.syncSelectedInstanceWithList();
+      State.libraryPane = 'content';
+      updateSidebarBadge();
+      navigateTo('instance', { force: true });
+    });
+  });
 }
 
 // ===== Modal System =====
@@ -395,6 +449,17 @@ async function init() {
     });
   });
 
+  // Sidebar: Join Discord (opens the invite in the browser)
+  document.getElementById('sidebar-join-discord')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (window.zenon && typeof window.zenon.openExternal === 'function') {
+      window.zenon.openExternal('https://discord.gg/umfvjxRFxy');
+    }
+  });
+
+  // Sidebar: settings icon button
+  document.getElementById('sidebar-settings-btn')?.addEventListener('click', () => navigateTo('settings'));
+
   // Modal overlay close
   document.getElementById('modal-overlay').addEventListener('click', closeAllModals);
 
@@ -418,12 +483,12 @@ async function init() {
     State.runningInstanceId = null;
     setConsoleStatus(`Exited (code ${data.code})`, false);
     logToConsole(`Game closed with exit code ${data.code}`, data.code === 0 ? 'success' : 'error');
-    if (State.currentPage === 'instances') renderInstances();
-    if (State.currentPage === 'library') renderLibrary();
+    if (State.currentPage === 'instances' || State.currentPage === 'library') renderInstances();
+    if (State.currentPage === 'instance' && typeof renderLibrary === 'function') renderLibrary();
     if (State.currentPage === 'discovery' && typeof window.__discoveryRefresh === 'function') {
       window.__discoveryRefresh();
     }
-    if (State.currentPage === 'library' && typeof window.__libraryBrowseRefresh === 'function') {
+    if (State.currentPage === 'instance' && typeof window.__libraryBrowseRefresh === 'function') {
       window.__libraryBrowseRefresh();
     }
   });
