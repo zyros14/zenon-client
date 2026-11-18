@@ -2,6 +2,18 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.10] - 2026-11-18
+
+### Fixed
+- **Manual "Check for updates" now works.** `update:check` no longer returns electron-updater's raw `checkForUpdates()` result over IPC — its `cancellationToken` and `downloadPromise` (class instances / promises) can't be structured-cloned, so the button silently threw "An object could not be cloned" whenever an update was actually available. It now returns a plain `{ isUpdateAvailable, versionInfo }` object.
+- **Java 25 auto-provisioning** is unchanged, but the 1.0.8 test build on 1.0.8 packaged with the fix was verified end-to-end: it detected this release as an available update from the live GitHub feed.
+
+### Notes
+- Auto-update from 1.0.9 → 1.0.10 works out of the box: the 1.0.9 build reaches GitHub, fetches `latest.yml`, and offers the update.
+- Windows installer is not yet code-signed — SmartScreen will flag it ("More info → Run anyway").
+
+---
+
 ## [1.0.9] - 2026-11-18
 
 ### Highlights
@@ -66,5 +78,6 @@ All notable changes to **Zenon Client** are documented here. The format follows 
 
 ---
 
+[1.0.10]: https://github.com/zyros14/zenon-client/releases/tag/v1.0.10
 [1.0.9]: https://github.com/zyros14/zenon-client/releases/tag/v1.0.9
 [1.0.8]: https://github.com/zyros14/zenon-client/releases/tag/v1.0.8
