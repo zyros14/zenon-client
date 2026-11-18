@@ -3540,8 +3540,18 @@ ipcMain.handle('update:check', async () => {
   if (!app.isPackaged) return { success: false, error: 'Updates only work in packaged builds.' };
   try {
     const { autoUpdater } = require('electron-updater');
+    // checkForUpdates() resolves with non-serializable members (cancellationToken, downloadPromise)
+    // when an update is available — return a plain shape IPC can clone.
     const res = await autoUpdater.checkForUpdates();
-    return { success: true, result: res || null };
+    return {
+      success: true,
+      result: res
+        ? {
+            isUpdateAvailable: !!res.isUpdateAvailable,
+            versionInfo: res.versionInfo || res.updateInfo || null
+          }
+        : null
+    };
   } catch (e) {
     return { success: false, error: e.message || String(e) };
   }
