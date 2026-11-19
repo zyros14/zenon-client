@@ -224,31 +224,28 @@ export function makeFloat() {
     // ========================================================================
     // LEGS — weight-bearing, reactive, weight transfer between feet
     // ========================================================================
-    [legBob, legBobVel] = spring(legBob, legBobVel, bob, 30, 7, dt);
-    const kneeGive = (bob - legBob) * 1.6; // knees absorb the float's rise/fall
+    [legBob, legBobVel] = spring(legBob, legBobVel, bob, 18, 8, dt);   // slower, heavier than before
+    const kneeGive = (bob - legBob) * 0.4; // gentle knee absorption, not a snap
 
-    // Slow weight transfer + irregular fast wobble on top
-    const weightSway = Math.sin(clock * 0.22 + soulOffset * 1.3);
-    const weightShiftFast = noise(clock * 0.18 + soulOffset, 40);
+    // Slow weight transfer between feet — smooth sine, nothing fast or jerky
+    const weightSway = Math.sin(clock * 0.18 + soulOffset * 1.1) * 0.03;
 
-    player.skin.leftLeg.rotation.x = 0.05 + noise(clock * 0.5 + soulOffset, 29) * 0.015
-      - legLean * 0.2 + kneeGive * 0.45 + Math.max(0, weightSway) * 0.055;
-    player.skin.rightLeg.rotation.x = 0.05 - noise(clock * 0.5 + soulOffset, 31) * 0.015
-      + legLean * 0.2 + kneeGive * 0.45 + Math.max(0, -weightSway) * 0.055;
+    player.skin.leftLeg.rotation.x = 0.05 + noise(clock * 0.5 + soulOffset, 29) * 0.01
+      - legLean * 0.08 + kneeGive * 0.2 + weightSway * 0.02;
+    player.skin.rightLeg.rotation.x = 0.05 - noise(clock * 0.5 + soulOffset, 31) * 0.01
+      + legLean * 0.08 + kneeGive * 0.2 - weightSway * 0.02;
 
-    player.skin.leftLeg.rotation.z = 0.01 + noise(clock * 0.33 + soulOffset, 33) * 0.008
-      + weightSway * 0.03;
-    player.skin.rightLeg.rotation.z = -0.01 - noise(clock * 0.33 + soulOffset, 35) * 0.008
-      + weightSway * 0.03;
+    player.skin.leftLeg.rotation.z = 0.01 + noise(clock * 0.33 + soulOffset, 33) * 0.006
+      + weightSway * 0.015;
+    player.skin.rightLeg.rotation.z = -0.01 - noise(clock * 0.33 + soulOffset, 35) * 0.006
+      + weightSway * 0.015;
 
-    // Feet splay independently — legs had zero rotation.y before, now they read as placed
-    player.skin.leftLeg.rotation.y = 0.02 + noise(clock * 0.3 + soulOffset, 37) * 0.02
-      + weightShiftFast * 0.018;
-    player.skin.rightLeg.rotation.y = -0.02 - noise(clock * 0.3 + soulOffset, 39) * 0.02
-      - weightShiftFast * 0.018;
+    // Feet splay independently — subtle, always present
+    player.skin.leftLeg.rotation.y = 0.02 + noise(clock * 0.3 + soulOffset, 37) * 0.015;
+    player.skin.rightLeg.rotation.y = -0.02 - noise(clock * 0.3 + soulOffset, 39) * 0.015;
 
-    // Hips nudge with weight transfer so it reads through the whole lower body
-    player.skin.body.position.x = weightSway * 0.03;
+    // Hips nudge with weight transfer — very subtle
+    player.skin.body.position.x = weightSway * 0.015;
 
     // ========================================================================
     // CAPE — billows, lags the whole chain + the bob, biggest of all
