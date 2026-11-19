@@ -2,6 +2,17 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.3] - 2026-11-18
+
+### Fixed
+- **Tools → Updates could leave the "Install" button permanently disabled** when the update had already auto-downloaded before the page mounted. The banner in `app.js` + the disabled button in `Tools` were out of sync. Now `app.js` flags the download event globally, and `Tools` picks it up on mount — the install button enables itself on next paint.
+
+### Notes
+- Windows installer is not code-signed — SmartScreen will flag it on first run ("More info → Run anyway").
+- Auto-update from 1.1.2 works: this release ships `latest.yml` and the blockmap.
+
+---
+
 ## [1.1.2] - 2026-11-18
 
 ### Fixed

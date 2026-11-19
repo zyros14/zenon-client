@@ -190,6 +190,12 @@ async function renderTools() {
     return current ? `You're up to date (v${current}).` : 'Check complete.';
   };
 
+  // If auto-update already downloaded while this page mounts (common when the page loads late), flag it up.
+  if (window.__zenonUpdateReady && installBtn) {
+    installBtn.disabled = false;
+    setUpdateStatus('Update ready — restart to install.');
+  }
+
   const runCheck = async () => {
     setUpdateStatus('Checking for updates…');
     hideProgress();

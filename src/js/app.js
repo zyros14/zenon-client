@@ -72,8 +72,13 @@ if (!window.__zenonUpdatesWired && typeof window.zenon?.onUpdateEvent === 'funct
     if (ev.event === 'available') {
       showToast('Update available — downloading…', 'info', 3500);
     } else if (ev.event === 'downloaded') {
-      showToast('Update ready — restart to apply', 'success', 5000);
-      setReminder(true, 'Update ready — restart to install');
+      window.__zenonUpdateReady = true;
+      showToast('Update ready - restart to apply', 'success', 5000);
+      setReminder(true, 'Update ready - restart to install');
+      const btn = document.getElementById('tools-install-update-btn');
+      if (btn) btn.disabled = false;
+      const status = document.getElementById('tools-update-status');
+      if (status) status.textContent = 'Update ready - restart to install.';
     } else if (ev.event === 'error') {
       showToast(`Update error: ${ev.message || 'unknown'}`, 'error', 5000);
     }
