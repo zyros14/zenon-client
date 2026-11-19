@@ -8,9 +8,24 @@ import {
   MeshBasicMaterial,
   PlaneGeometry
 } from 'three';
-import { makeFloat } from '../animations/skin-float';
+import { makeFloat } from '../animations/skin-float.js';
 
 // Animation imported from '../animations/skin-float'.
+
+// Simple fallback animation in case the dynamic float fails to construct.
+function makeFallbackFloat() {
+  return {
+    update(player, progress) {
+      const t = progress * 1.6;
+      player.skin.body.rotation.y = Math.sin(t * 0.5) * 0.03;
+      player.skin.body.rotation.x = Math.sin(t) * 0.015;
+      player.position.y = Math.sin(t) * 0.12;
+      player.skin.head.rotation.y = Math.sin(t * 0.35 + 0.6) * 0.07;
+      player.skin.head.rotation.x = Math.sin(t * 0.55 + 1.4) * 0.032;
+      player.cape.rotation.x = Math.sin(t * 0.8) * 0.03 + Math.PI * 0.06;
+    }
+  };
+}
 
 const ANIMATION_CHOICES = {
   float: () => makeFloat()
@@ -455,7 +470,12 @@ async function ensureViewer() {
     viewer.controls.enablePan = false;
     viewer.controls.minPolarAngle = Math.PI / 4.5;
     viewer.controls.maxPolarAngle = Math.PI / 1.8;
-    viewer.animation = ANIMATION_CHOICES.float();
+    try {
+      viewer.animation = ANIMATION_CHOICES.float();
+    } catch (animErr) {
+      console.error('[skins] float animation failed, using fallback:', animErr);
+      viewer.animation = makeFallbackFloat();
+    }
     // Studio floor under the model (top face at foot level)
     try {
       if (!state.floor) state.floor = buildFloor();
@@ -622,8 +642,14 @@ async function renderSkins() {
 function setViewerAnimation(kind) {
   const viewer = state.viewer;
   if (!viewer) return;
-  const make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.float;
-  viewer.animation = make();
+  let make;
+  try {
+    make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.float;
+    viewer.animation = make();
+  } catch (e) {
+    console.error('[skins] animation switch failed:', e);
+    viewer.animation = makeFallbackFloat();
+  }
 }
 
 function syncArmsToggle() {
