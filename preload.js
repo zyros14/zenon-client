@@ -32,7 +32,11 @@ contextBridge.exposeInMainWorld('zenon', {
   // Updates (packaged builds only)
   updateCheck: () => ipcRenderer.invoke('update:check'),
   updateInstall: () => ipcRenderer.invoke('update:install'),
-  onUpdateEvent: (fn) => { ipcRenderer.on('update:event', fn); return () => ipcRenderer.removeListener('update:event', fn); },
+  onUpdateEvent: (fn) => {
+  const listener = (_event, payload) => fn(payload);
+  ipcRenderer.on('update:event', listener);
+  return () => ipcRenderer.removeListener('update:event', listener);
+},
 
   // Window controls
   minimize: () => ipcRenderer.send('window-minimize'),

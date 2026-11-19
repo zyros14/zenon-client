@@ -2,6 +2,18 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.2] - 2026-11-18
+
+### Fixed
+- **Background auto-updates could never actually fire.** `onUpdateEvent` forwarded the raw `IpcRendererEvent` object to the renderer instead of the event payload, so every message the updater sent was discarded silently — the "Update ready" banner never showed and progress updates never painted. The preload now unwraps the event properly (`(event, payload) => fn(payload)`), matching what the renderer expects.
+- **What this means in practice:** auto-check + auto-download now actually reach the UI. If an update is found you'll see the toast, the banner at the top, and the progress bar in Tools → Updates. If something goes wrong, the status line + toast will say so instead of staying mute.
+
+### Notes
+- Windows installer is not code-signed — SmartScreen will flag it on first run ("More info → Run anyway").
+- Auto-update from 1.1.1 works: this release ships `latest.yml` and the blockmap.
+
+---
+
 ## [1.1.1] - 2026-11-18
 
 ### Fixed
