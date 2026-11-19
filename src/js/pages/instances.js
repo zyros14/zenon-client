@@ -110,6 +110,7 @@ function renderInstanceCard(inst) {
       : inst.loader === 'forge'
         ? '<span class="tag tag-forge">Forge</span>'
         : '<span class="tag tag-vanilla">Vanilla</span>';
+  const runningTag = State.runningInstanceIds.has(inst.id) ? '<span class="tag tag-running" title="Game is running"><span class="tag-running-dot"></span>Running</span>' : '';
 
   return `
     <div class="instance-card ${isSelected ? 'selected' : ''}" data-id="${inst.id}" role="button" tabindex="0" aria-label="Open ${escapeHtml(inst.name)}">
@@ -122,13 +123,14 @@ function renderInstanceCard(inst) {
             <div class="ic-tags">
               <span class="tag tag-version">${escapeHtml(inst.version)}</span>
               ${loaderTag}
+              ${runningTag}
             </div>
             <div class="ic-hint">Content, files, worlds, logs</div>
           </div>
         </div>
         <div class="ic-actions">
           <span class="ic-last-played">
-            ${inst.lastPlayed ? formatDate(inst.lastPlayed) : 'Never launched'}
+            ${typeof playTimeLabel === 'function' ? playTimeLabel(inst) : (inst.lastPlayed ? formatDate(inst.lastPlayed) : 'Never played')}
           </span>
           <button class="btn btn-ghost btn-sm btn-icon" data-action="edit" data-id="${inst.id}" title="Rename" style="padding:6px 8px">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
@@ -203,7 +205,7 @@ function bindInstanceCardEvents() {
 }
 
 // ===== Edit Instance Modal =====
-const EIM_ICON_CHOICES = ['default', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const EIM_ICON_CHOICES = ['default', ...((window.ZenonInstanceIcons && window.ZenonInstanceIcons.ICONS.map((i) => i.id)) || ['svg:core'])];
 let eimSelectedIcon = 'default';
 
 function parseRamToMb(s) {
@@ -331,14 +333,10 @@ function syncEimIconPreview() {
     const inst = State.instances.find((i) => i.id === id);
     el.innerHTML = inst ? getInstanceIcon(inst) : '?';
   } else {
-    // If it's an uploaded image icon, show it; otherwise show the chosen glyph.
-    if (typeof eimSelectedIcon === 'string' && eimSelectedIcon.startsWith('img:')) {
-      const id = document.getElementById('edit-inst-id')?.value;
-      const inst = State.instances.find((i) => i.id === id) || {};
-      el.innerHTML = getInstanceIcon({ ...inst, icon: eimSelectedIcon });
-    } else {
-      el.textContent = eimSelectedIcon;
-    }
+    // If it's an uploaded image icon, show it; otherwise show the sigil/letter/default.
+    const id = document.getElementById('edit-inst-id')?.value;
+    const inst = State.instances.find((i) => i.id === id) || {};
+    el.innerHTML = getInstanceIcon({ ...inst, icon: eimSelectedIcon });
   }
   document.querySelectorAll('.eim-icon-pick').forEach((btn) => {
     btn.classList.toggle('selected', btn.dataset.icon === eimSelectedIcon);
@@ -357,19 +355,20 @@ async function openEditInstanceModal(id) {
   document.getElementById('eim-bc-name').textContent = inst.name || 'Instance';
   document.getElementById('eim-name').value = inst.name || '';
 
-  // Allow existing uploaded image icons (img:...) as well as built-in glyphs.
+  // Allow existing uploaded image icons (img:…), built-in sigils (svg:…), and legacy single-letter glyphs.
+  const legacyLetter = typeof inst.icon === 'string' && inst.icon.length === 1 && /[A-Za-z0-9]/.test(inst.icon) ? inst.icon : null;
   eimSelectedIcon =
-    inst.icon && typeof inst.icon === 'string' && inst.icon.startsWith('img:')
+    inst.icon && typeof inst.icon === 'string' && (inst.icon.startsWith('img:') || EIM_ICON_CHOICES.includes(inst.icon))
       ? inst.icon
-      : inst.icon && EIM_ICON_CHOICES.includes(inst.icon)
-        ? inst.icon
-        : 'default';
+      : legacyLetter || 'default';
 
   const picks = document.getElementById('eim-icon-picks');
-  picks.innerHTML = EIM_ICON_CHOICES.map(
-    (ic) =>
-      `<button type="button" class="eim-icon-pick ${ic === eimSelectedIcon ? 'selected' : ''}" data-icon="${ic}">${ic === 'default' ? '&#9675;' : escapeHtml(ic)}</button>`
-  ).join('');
+  picks.innerHTML = EIM_ICON_CHOICES.map((ic) => {
+    const inner = ic === 'default'
+      ? '<span class="eim-icon-pick-glyph">&#9675;</span>'
+      : (window.ZenonInstanceIcons ? window.ZenonInstanceIcons.svgFor(ic) : escapeHtml(ic));
+    return `<button type="button" class="eim-icon-pick ${ic === eimSelectedIcon ? 'selected' : ''}" data-icon="${ic}" title="${escapeHtml(ic === 'default' ? 'Auto (hashed from instance)' : window.ZenonInstanceIcons?.ICONS.find((i) => i.id === ic)?.name || ic)}">${inner}</button>`;
+  }).join('');
   picks.querySelectorAll('.eim-icon-pick').forEach((btn) => {
     btn.addEventListener('click', () => {
       eimSelectedIcon = btn.dataset.icon;
@@ -628,6 +627,28 @@ async function openEditInstanceModal(id) {
     const instanceId = document.getElementById('edit-inst-id')?.value?.trim();
     await exportInstanceZipUi(instanceId);
   };
+
+  document.getElementById('edit-inst-export-mrpack-btn').onclick = async () => {
+    const instanceId = document.getElementById('edit-inst-id')?.value?.trim();
+    if (!instanceId) return;
+    const btn = document.getElementById('edit-inst-export-mrpack-btn');
+    btn.disabled = true;
+    btn.textContent = 'Packing…';
+    try {
+      const r = await window.zenon.exportInstanceMrpack(instanceId);
+      if (r?.canceled) return;
+      if (r?.success) {
+        showToast(`Modpack saved — ${r.modrinth} modrinth / ${r.overrides} overrides`, 'success', 5000);
+      } else {
+        showToast(`Export failed: ${r?.error || 'unknown error'}`, 'error', 5000);
+      }
+    } catch (e) {
+      showToast(`Export failed: ${e?.message || e}`, 'error', 5000);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Share as .mrpack';
+    }
+  };
 }
 
 // ===== Create Instance Modal =====
@@ -809,7 +830,7 @@ async function confirmDeleteInstance(id) {
 }
 
 // ===== Launch Game =====
-async function launchInstance(id) {
+async function launchInstance(id, opts = {}) {
   if (State.isLaunching) {
     showToast('Game is already launching!', 'error');
     return;
@@ -818,24 +839,36 @@ async function launchInstance(id) {
   const inst = State.instances.find(i => i.id === id);
   if (!inst) return;
 
+  const safeMode = !!opts.safeMode;
+  const taskLabel = safeMode ? `Safe launch — ${inst.name}` : `Launch ${inst.name}`;
+  const taskId = window.ZenonTasks ? window.ZenonTasks.start(taskLabel, { detail: 'Starting…' }) : null;
+  window.__zenonLaunchTaskId = taskId;
+
   State.selectedInstance = inst;
   State.isLaunching = true;
   updateSidebarBadge();
 
   openConsole();
   clearConsole();
-  setConsoleStatus('Launching...', true);
-  logToConsole(`Launching ${inst.name} (${inst.version}, ${inst.loader})`, 'info');
+  if (typeof window.__zenonResetLaunchProgress === 'function') window.__zenonResetLaunchProgress();
+  setConsoleStatus(safeMode ? 'Launching (safe mode)...' : 'Launching...', true);
+  logToConsole(`${safeMode ? 'Safe-mode launch' : 'Launching'} ${inst.name} (${inst.version}, ${inst.loader})`, 'info');
   logToConsole(`Java: ${State.settings.javaPath || 'java'}`, 'info');
   logToConsole(`RAM: ${State.settings.maxRam || '2G'}`, 'info');
 
-  const result = await window.zenon.launchGame(id);
+  const result = safeMode
+    ? await window.zenon.launchGameSafe(id)
+    : await window.zenon.launchGame(id);
 
   if (!result.success) {
     State.isLaunching = false;
     setConsoleStatus('Failed', false);
     logToConsole(`Launch failed: ${result.error}`, 'error');
     showToast(`Launch failed: ${result.error}`, 'error', 5000);
+    if (taskId) {
+      window.ZenonTasks.fail(taskId, result.error || 'Launch failed');
+      window.__zenonLaunchTaskId = null;
+    }
   } else {
     logToConsole('Game launched successfully', 'success');
     setConsoleStatus('Running', true);

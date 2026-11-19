@@ -7,6 +7,8 @@ const State = {
   mcVersions: [],
   isLaunching: false,
   runningInstanceId: null,
+  /** Instance ids with a live game process launched from this Zenon process. */
+  runningInstanceIds: new Set(),
   auth: { loggedIn: false, profile: null },
   /** Instance library sub-tab: content | files | worlds | logs */
   libraryPane: 'content'
@@ -52,10 +54,19 @@ if (!window.__zenonUpdatesWired && typeof window.zenon?.onUpdateEvent === 'funct
     } catch (e) { return { on: false, text: '' }; }
   };
 
+  // Respect the user's "Update reminder" setting — Settings → Updates.
+  const reminderAllowed = () => {
+    try {
+      return (State?.settings?.updateReminder !== false);
+    } catch (e) {
+      return true;
+    }
+  };
+
   // Restore reminder on startup/navigation.
   (async () => {
     const r = readReminder();
-    if (r?.on) setReminder(true, r.text || 'Update ready — restart to install');
+    if (r?.on && reminderAllowed()) setReminder(true, r.text || 'Update ready — restart to install');
   })();
 
   document.getElementById('update-reminder-install')?.addEventListener('click', async () => {
@@ -70,16 +81,33 @@ if (!window.__zenonUpdatesWired && typeof window.zenon?.onUpdateEvent === 'funct
   window.zenon.onUpdateEvent((ev) => {
     if (!ev?.event) return;
     if (ev.event === 'available') {
+      window.__zenonUpdateTask = ZenonTasks.start('Downloading update…', { detail: 'Update found', progress: 0 });
       showToast('Update available — downloading…', 'info', 3500);
+    } else if (ev.event === 'progress') {
+      const tid = window.__zenonUpdateTask;
+      const pct = ev?.progress?.percent;
+      if (tid && Number.isFinite(Number(pct))) {
+        ZenonTasks.update(tid, { progress: Math.round(Number(pct)), detail: `Downloading… ${Math.round(Number(pct))}%` });
+      }
     } else if (ev.event === 'downloaded') {
+      const tid = window.__zenonUpdateTask;
+      if (tid) {
+        ZenonTasks.succeed(tid, 'Restart to install');
+        window.__zenonUpdateTask = null;
+      }
       window.__zenonUpdateReady = true;
-      showToast('Update ready - restart to apply', 'success', 5000);
-      setReminder(true, 'Update ready - restart to install');
+      showToast('Update ready — restart to install', 'success', 5000);
+      if (reminderAllowed()) setReminder(true, 'Update ready — restart to install');
       const btn = document.getElementById('tools-install-update-btn');
       if (btn) btn.disabled = false;
       const status = document.getElementById('tools-update-status');
       if (status) status.textContent = 'Update ready - restart to install.';
     } else if (ev.event === 'error') {
+      const tid = window.__zenonUpdateTask;
+      if (tid) {
+        ZenonTasks.fail(tid, ev.message || 'Update failed');
+        window.__zenonUpdateTask = null;
+      }
       showToast(`Update error: ${ev.message || 'unknown'}`, 'error', 5000);
     }
   });
@@ -115,8 +143,15 @@ async function navigateTo(page, opts = {}) {
 
 async function renderPage(page) {
   const content = document.getElementById('main-content');
-  content.innerHTML = '<div class="page"><div class="loading-spinner"></div></div>';
-  content.scrollTop = 0;
+  const oldPage = content.children[0] || null;
+
+  // Fade out the current page before replacing it — this prevents the black
+  // flash that happens when innerHTML wipes the DOM mid-paint.
+  if (oldPage) {
+    oldPage.style.transition = 'opacity 100ms ease';
+    oldPage.style.opacity = '0';
+    await new Promise((r) => setTimeout(r, 100));
+  }
 
   switch (page) {
     case 'home': await renderHome(); break;
@@ -130,29 +165,25 @@ async function renderPage(page) {
     case 'settings': await renderSettings(); break;
   }
 
-  initReveal();
+  const newPage = content.children[0] || null;
+  if (newPage) {
+    newPage.style.opacity = '0';
+    newPage.style.transition = 'opacity 150ms ease';
+    // Let the new element settle in the DOM, then fade it in.
+    await new Promise((r) => requestAnimationFrame(r));
+    newPage.style.opacity = '1';
+  }
+
+  content.scrollTop = 0;
 }
 
-// ===== Reveal-on-scroll =====
-function initReveal() {
-  const els = document.querySelectorAll('.reveal:not(.visible)');
-  if (!('IntersectionObserver' in window)) {
-    els.forEach((el) => el.classList.add('visible'));
-    return;
-  }
-  let idx = 0;
-  const observer = new IntersectionObserver((entries) => {
-    for (const entry of entries) {
-      if (entry.isIntersecting) {
-        entry.target.classList.add('visible');
-        observer.unobserve(entry.target);
-      }
-    }
-  }, { threshold: 0.06 });
-  els.forEach((el) => {
-    el.style.setProperty('--reveal-delay', `${Math.min(idx++ * 70, 350)}ms`);
-    observer.observe(el);
-  });
+/** Re-render whatever is showing so running badges/buttons reflect the live set. */
+function refreshRunningUI() {
+  renderSidebarRecent();
+  if (State.currentPage === 'instances' || State.currentPage === 'library') renderInstances();
+  else if (State.currentPage === 'instance' && typeof renderLibrary === 'function') renderLibrary();
+  else if (State.currentPage === 'home' && typeof renderHome === 'function') renderHome();
+  else if (State.currentPage === 'tools' && typeof renderTools === 'function') renderTools();
 }
 
 // ===== Sidebar Instance Badge =====
@@ -194,14 +225,17 @@ function renderSidebarRecent() {
       const loader = String(inst.loader || 'vanilla');
       const meta = [inst.version || '', loader !== 'vanilla' ? loader : ''].filter(Boolean).join(' · ');
       const active = selectedId && inst.id === selectedId ? ' active' : '';
+      const runningDot = State.runningInstanceIds.has(inst.id)
+        ? '<span class="recent-running-dot" title="Game is running" aria-label="Game is running"></span>'
+        : '';
       return `
-        <button type="button" class="sidebar-recent-item${active}" data-recent-id="${escapeHtml(inst.id)}" title="Open ${escapeHtml(inst.name || 'Instance')}">
+        <button type="button" class="sidebar-recent-item${active}${runningDot ? ' is-running' : ''}" data-recent-id="${escapeHtml(inst.id)}" title="Open ${escapeHtml(inst.name || 'Instance')}">
           <span class="sidebar-recent-icon">${getInstanceIcon(inst)}</span>
           <span class="sidebar-recent-text">
             <span class="sidebar-recent-name">${escapeHtml(inst.name || 'Instance')}</span>
             <span class="sidebar-recent-meta">${escapeHtml(meta)}</span>
           </span>
-          <span class="sidebar-recent-play" aria-hidden="true">&#8250;</span>
+          ${runningDot || '<span class="sidebar-recent-play" aria-hidden="true">&#8250;</span>'}
         </button>`;
     })
     .join('');
@@ -364,24 +398,15 @@ function getInstanceIcon(instance) {
   const src = instanceIconSrc(instance);
   if (src) return `<img class="instance-icon-img" src="${escapeHtml(src)}" alt="" draggable="false" />`;
   const ic = instance.icon;
-  // Built-in glyph choices (A–H) keep their letter icon…
+  // Legacy single-letter glyphs (A–H) keep rendering for existing instances…
   if (ic && ic !== 'default' && typeof ic === 'string' && ic.length === 1) {
     return escapeHtml(ic.toUpperCase());
   }
-  // …everything else gets the default orb, tinted per instance.
-  return instanceOrbHtml(instance);
-}
-
-/** Default instance avatar: one animated nebula orb (APNG), hue-rotated to a stable color per instance. */
-const INSTANCE_ORB_HUES = [0, 70, 140, 210, 280, 330];
-
-function instanceOrbHtml(instance) {
-  const id = String((instance && (instance.id || instance.name)) || '');
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  const hue = INSTANCE_ORB_HUES[h % INSTANCE_ORB_HUES.length];
-  const filter = hue ? ` style="filter:hue-rotate(${hue}deg) saturate(1.15)"` : '';
-  return `<img class="instance-icon-img" src="assets/orbs/orb.png" alt="" draggable="false"${filter} />`;
+  // …everything else gets one of our SVG sigils (stored as svg:<id>, default hashed from the instance id).
+  if (window.ZenonInstanceIcons) {
+    return window.ZenonInstanceIcons.svgForInstance(ic, instance.id || instance.name);
+  }
+  return '';
 }
 
 const THEME_IDS = ['zenon', 'midnight', 'aurora', 'slate', 'paper'];
@@ -398,17 +423,15 @@ function applyTheme(raw) {
 }
 
 const __splashStartedAt = Date.now();
-const SPLASH_MIN_MS = 3_000;
-const SPLASH_MAX_MS = 10_000;
-const __splashTargetMs =
-  SPLASH_MIN_MS + Math.floor(Math.random() * (SPLASH_MAX_MS - SPLASH_MIN_MS + 1));
+/** Hide the splash as soon as the UI is ready — the cap is only a nicety, not a fake delay. */
+const SPLASH_MIN_MS = 400;
 
 function hideSplash() {
   const el = document.getElementById('splash-screen');
   if (!el) return;
   if (el.classList.contains('splash-hide')) return;
   const elapsed = Date.now() - __splashStartedAt;
-  const wait = Math.max(0, __splashTargetMs - elapsed);
+  const wait = Math.max(0, SPLASH_MIN_MS - elapsed);
   setTimeout(() => {
     try {
       el.classList.add('splash-hide');
@@ -427,6 +450,12 @@ async function bootstrapMainUIAfterLogin() {
   applyTheme(State.settings.theme);
 
   State.instances = await window.zenon.getInstances();
+  try {
+    const running = await window.zenon.getRunningInstances?.();
+    State.runningInstanceIds = new Set(Array.isArray(running?.ids) ? running.ids : []);
+  } catch (e) {
+    State.runningInstanceIds = new Set();
+  }
   if (State.instances.length > 0) {
     if (!State.selectedInstance) State.selectedInstance = State.instances[0];
     else if (typeof window.syncSelectedInstanceWithList === 'function') window.syncSelectedInstanceWithList();
@@ -439,6 +468,9 @@ async function bootstrapMainUIAfterLogin() {
 // ===== Initialize =====
 async function init() {
   createToastContainer();
+
+  // Command palette (Ctrl+K)
+  if (typeof window.CommandPalette === 'object') window.CommandPalette.init();
 
   // Window controls
   document.getElementById('btn-minimize').addEventListener('click', () => window.zenon.minimize());
@@ -481,20 +513,174 @@ async function init() {
   window.zenon.onLaunchLog((data) => {
     const type = data.type === 'error' ? 'error' : data.type === 'data' ? 'default' : 'info';
     logToConsole(data.message, type);
+
+    // Surface Java auto-provisioning as an Activity task (it is the slowest silent step).
+    try {
+      const msg = String(data?.message ?? '');
+      const dm = msg.match(/Downloading Java (\d+) runtime — (\d+)%/);
+      if (dm) {
+        const tid = (window.__javaTasks = window.__javaTasks || {})[`java-${dm[1]}`]
+          || (ZenonTasks.start(`Java ${dm[1]} runtime`, { detail: 'Downloading…' }));
+        window.__javaTasks[`java-${dm[1]}`] = tid;
+        ZenonTasks.update(tid, { progress: Number(dm[2]), detail: `${dm[2]}%` });
+        return;
+      }
+      const ex = msg.match(/Extracting Java (\d+) runtime/);
+      if (ex) {
+        const key = `java-${ex[1]}`;
+        const tid = (window.__javaTasks = window.__javaTasks || {})[key];
+        if (tid) ZenonTasks.update(tid, { progress: 99, detail: 'Extracting…' });
+        return;
+      }
+      const use = msg.match(/Using Java (\d+)/);
+      if (use) {
+        const tasks = window.__javaTasks || {};
+        const installed = Object.keys(tasks);
+        for (const k of installed) {
+          ZenonTasks.succeed(tasks[k], 'Runtime installed');
+          delete tasks[k];
+        }
+        if (installed.length) showToast(`Java ${use[1]} ready`, 'success');
+      }
+    } catch (e) {}
   });
 
   window.zenon.onLaunchClose((data) => {
     State.isLaunching = false;
     State.runningInstanceId = null;
+    if (data?.instanceId) State.runningInstanceIds.delete(data.instanceId);
     setConsoleStatus(`Exited (code ${data.code})`, false);
     logToConsole(`Game closed with exit code ${data.code}`, data.code === 0 ? 'success' : 'error');
-    if (State.currentPage === 'instances' || State.currentPage === 'library') renderInstances();
-    if (State.currentPage === 'instance' && typeof renderLibrary === 'function') renderLibrary();
+    const tid = window.__zenonLaunchTaskId;
+    if (tid) {
+      ZenonTasks.succeed(tid, `Exited (code ${data.code})`);
+      window.__zenonLaunchTaskId = null;
+    }
+    if (data?.code && data.code !== 0) {
+      showToast(`Minecraft exited with code ${data.code} — check the log for details.`, 'error', 6000);
+    }
+    refreshRunningUI();
     if (State.currentPage === 'discovery' && typeof window.__discoveryRefresh === 'function') {
       window.__discoveryRefresh();
     }
     if (State.currentPage === 'instance' && typeof window.__libraryBrowseRefresh === 'function') {
       window.__libraryBrowseRefresh();
+    }
+  });
+
+  // ===== Launch progress stepper =====
+  const LAUNCH_STAGES = [
+    { id: 'auth', label: 'Account' },
+    { id: 'version', label: 'Metadata' },
+    { id: 'loader', label: 'Loader' },
+    { id: 'java', label: 'Java' },
+    { id: 'preparing', label: 'Files' },
+    { id: 'running', label: 'Running' }
+  ];
+  const STAGE_PROGRESS = { auth: 10, version: 28, loader: 42, java: 60, preparing: 80, running: 100 };
+  const STAGE_INDEX = {};
+  LAUNCH_STAGES.forEach((s, i) => { STAGE_INDEX[s.id] = i; });
+
+  function stageLabel(stage, detail) {
+    switch (stage) {
+      case 'auth': return 'Account verified';
+      case 'version': return 'Loading version metadata…';
+      case 'loader': return detail ? `Setting up ${detail}…` : 'Setting up loader…';
+      case 'java': return detail ? `Java ready — ${detail}` : 'Java ready';
+      case 'preparing': return 'Downloading / verifying game files…';
+      case 'running': return 'Minecraft is running';
+      case 'closed': return `Exited — ${detail || ''}`.trim();
+      case 'failed': return detail ? `Failed — ${detail}` : 'Launch failed';
+      default: return detail || 'Launching…';
+    }
+  }
+
+  function renderStageChips(activeStage, terminal) {
+    const wrap = document.getElementById('console-stages');
+    if (!wrap) return;
+    if (terminal === 'closed') {
+      wrap.innerHTML = LAUNCH_STAGES.map((s) => `<span class="console-stage is-done" data-stage="${s.id}">${s.label}</span>`).join('');
+      return;
+    }
+    const activeIdx = STAGE_INDEX[activeStage] ?? -1;
+    const failedIdx = terminal === 'failed' ? LAUNCH_STAGES.length : -1;
+    wrap.innerHTML = LAUNCH_STAGES.map((s, i) => {
+      let cls = 'console-stage';
+      if (terminal === 'failed' && failedIdx >= i) cls += ' is-failed';
+      else if (activeIdx > i) cls += ' is-done';
+      else if (activeIdx === i) cls += ' is-active';
+      return `<span class="${cls}" data-stage="${s.id}">${s.label}</span>`;
+    }).join('');
+  }
+
+  function setLaunchProgressVisible(visible) {
+    const strip = document.getElementById('console-progress');
+    if (strip) strip.style.display = visible ? 'block' : 'none';
+  }
+
+  function resetLaunchProgress() {
+    const strip = document.getElementById('console-progress');
+    const fill = document.getElementById('console-progress-fill');
+    const label = document.getElementById('console-progress-label');
+    const pct = document.getElementById('console-progress-pct');
+    if (fill) fill.style.width = '0%';
+    if (label) label.textContent = 'Preparing…';
+    if (pct) pct.textContent = '';
+    if (strip) strip.style.display = 'none';
+    const wrap = document.getElementById('console-stages');
+    if (wrap) wrap.innerHTML = '';
+  }
+  window.__zenonResetLaunchProgress = resetLaunchProgress;
+
+  window.zenon.onLaunchProgress?.((p) => {
+    if (!p || !p.stage) return;
+    if (p.stage === 'running' && p.instanceId) {
+      State.runningInstanceIds.add(p.instanceId);
+      State.runningInstanceId = p.instanceId;
+      refreshRunningUI();
+    } else if (p.stage === 'failed' && p.instanceId) {
+      State.runningInstanceIds.delete(p.instanceId);
+      refreshRunningUI();
+    }
+    const strip = document.getElementById('console-progress');
+    if (!strip) return;
+
+    const fill = document.getElementById('console-progress-fill');
+    const label = document.getElementById('console-progress-label');
+    const pctEl = document.getElementById('console-progress-pct');
+    const stage = String(p.stage);
+
+    setLaunchProgressVisible(true);
+    label.textContent = stageLabel(stage, p.detail);
+    const pct = STAGE_PROGRESS[stage];
+    if (fill && pct != null) fill.style.width = `${pct}%`;
+    if (pctEl) pctEl.textContent = pct != null && stage !== 'closed' && stage !== 'failed' ? `${pct}%` : '';
+
+    if (stage === 'closed') {
+      renderStageChips(null, 'closed');
+      if (fill) fill.style.width = '100%';
+    } else if (stage === 'failed') {
+      renderStageChips(null, 'failed');
+      if (fill) fill.style.width = '100%';
+    } else {
+      renderStageChips(stage, null);
+    }
+
+    // Mirror into the Activity task, if this launch has one open.
+    const tid = window.__zenonLaunchTaskId;
+    if (!tid) return;
+    if (STAGE_PROGRESS[stage] != null) {
+      ZenonTasks.update(tid, { progress: STAGE_PROGRESS[stage], detail: stageLabel(stage, p.detail) });
+    }
+    if (stage === 'running') {
+      ZenonTasks.succeed(tid, 'Minecraft is running');
+      window.__zenonLaunchTaskId = null;
+    } else if (stage === 'failed') {
+      ZenonTasks.fail(tid, p.detail || 'Launch failed');
+      window.__zenonLaunchTaskId = null;
+    } else if (stage === 'closed' && window.__zenonLaunchTaskId) {
+      ZenonTasks.succeed(tid, 'Game closed');
+      window.__zenonLaunchTaskId = null;
     }
   });
 

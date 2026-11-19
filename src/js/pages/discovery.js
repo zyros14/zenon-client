@@ -150,9 +150,9 @@ async function renderDiscovery() {
           <span class="page-kicker">${discoverySource === 'curseforge' ? 'CurseForge' : 'Modrinth'}</span>
           <h1 class="page-title discovery-title">Discovery</h1>
           <p class="page-subtitle discovery-sub">${discoverySource === 'curseforge'
-            ? 'Search CurseForge for mods, shaders, resource packs, and data packs.'
+            ? 'Search CurseForge for mods, shaders, resource packs, data packs, and modpacks.'
             : 'Search Modrinth for mods, modpacks, shaders, resource packs, and data packs.'}</p>
-          <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance${discoverySource === 'modrinth' ? ' (or a modpack creates a new one)' : ' (modpack installs are Modrinth-only for now)'}.</p>
+          <p class="discovery-flow-hint">Discovery is not tied to one instance. When you install, you pick a compatible instance (or a modpack creates a new one).</p>
         </div>
       </div>
 
@@ -164,7 +164,7 @@ async function renderDiscovery() {
       <div class="discovery-type-row" id="discovery-type-row">
         ${DISCOVERY_TYPES.map(
           (t) => `
-          <button type="button" class="id-pill ${t.id === discoveryTypeId ? 'active' : ''} ${discoverySource === 'curseforge' && t.id === 'modpack' ? 'is-disabled' : ''}" data-type="${t.id}" ${discoverySource === 'curseforge' && t.id === 'modpack' ? 'aria-disabled="true" title="CurseForge modpack installs are not supported yet"' : ''}>${t.label}</button>
+          <button type="button" class="id-pill ${t.id === discoveryTypeId ? 'active' : ''}" data-type="${t.id}">${t.label}</button>
         `
         ).join('')}
       </div>
@@ -200,10 +200,9 @@ async function renderDiscovery() {
     if (!btn) return;
     const next = btn.dataset.source === 'curseforge' ? 'curseforge' : 'modrinth';
     if (next === discoverySource) return;
+    // CurseForge source keeps whatever type the user selected — modpacks are supported.
     discoverySource = next;
     try { localStorage.setItem('zenon-discovery-source', next); } catch (_) {}
-    // CurseForge has no modpack support here — force back to Mods if modpacks were selected.
-    if (next === 'curseforge' && discoveryTypeId === 'modpack') discoveryTypeId = 'mod';
     discoveryOffset = 0;
     await renderDiscovery();
     await runDiscoverySearch(0);
@@ -211,10 +210,7 @@ async function renderDiscovery() {
 
   document.getElementById('discovery-type-row')?.addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-type]');
-    if (!btn || btn.getAttribute('aria-disabled') === 'true') {
-      if (btn) showToast('CurseForge modpack installs are not supported yet — switch to Modrinth.', 'info', 3500);
-      return;
-    }
+    if (!btn) return;
     discoveryTypeId = btn.dataset.type;
     discoveryOffset = 0;
     await renderDiscovery();
@@ -281,7 +277,6 @@ async function runDiscoverySearch(offset) {
   if (!resultsEl) return;
 
   if (typeof offset === 'number') discoveryOffset = offset;
-  if (discoverySource === 'curseforge' && currentDiscoveryType().id === 'modpack') discoveryTypeId = 'mod';
   const type = currentDiscoveryType();
   const version = document.getElementById('discovery-filter-version')?.value || '';
   const loaderEl = document.getElementById('discovery-filter-loader');

@@ -44,6 +44,16 @@ function formatPlayTime(seconds) {
   return `${minutes}m`;
 }
 
+/**
+ * Total-played-time label for an instance (seconds, accumulated on game exit).
+ * No tracked time just shows zero — no special-casing.
+ */
+function playTimeLabel(inst) {
+  const secs = Math.max(0, Number(inst?.playTime) || 0);
+  if (secs <= 0) return '0m played';
+  return `${formatPlayTime(secs)} played`;
+}
+
 /** Toast text for an install result, including auto-installed Modrinth dependencies. */
 function describeDependencyInstall(title, result) {
   const deps = result && result.deps;

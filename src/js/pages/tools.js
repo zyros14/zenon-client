@@ -68,6 +68,17 @@ async function renderTools() {
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:16px" id="tools-backups-card">
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:800;font-size:14px">Backups</div>
+            <div style="margin-top:6px;color:var(--text-muted);font-size:12px">Snapshots live under your app-data <code class="id-code">backups/</code> folder. Restoring creates a <em>copy</em> — your current instance is never overwritten.</div>
+          </div>
+          <button type="button" class="btn btn-primary btn-sm" id="tools-backup-now-btn" ${selected ? '' : 'disabled'}>Back up selected instance</button>
+        </div>
+        <div id="tools-backups-list" style="margin-top:12px;display:flex;flex-direction:column;gap:6px"></div>
+      </div>
+
       <div class="card">
         <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
@@ -100,6 +111,87 @@ async function renderTools() {
   `;
 
   document.getElementById('tools-new-instance-btn')?.addEventListener('click', () => openCreateInstanceModal());
+
+  // ===== Backups =====
+  const renderBackupsList = async () => {
+    const wrap = document.getElementById('tools-backups-list');
+    if (!wrap) return;
+    wrap.innerHTML = '<div class="loading-spinner"></div>';
+    const all = [];
+    for (const inst of State.instances || []) {
+      try {
+        const list = await window.zenon.listBackups?.(inst.id);
+        if (Array.isArray(list)) {
+          for (const b of list) all.push({ ...b, instanceName: inst.name });
+        }
+      } catch (e) {}
+    }
+    all.sort((a, b) => (b.at || 0) - (a.at || 0));
+    const top = all.slice(0, 8);
+    if (top.length === 0) {
+      wrap.innerHTML = '<div class="empty-inline">No backups yet. Use “Back up selected instance” to create one.</div>';
+      return;
+    }
+    const fmtSize = (n) => n >= 1073741824 ? `${(n / 1073741824).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1048576))} MB`;
+    wrap.innerHTML = top.map((b) => `
+      <div class="tools-backup-row" data-file="${escapeHtml(b.file)}">
+        <div class="tools-backup-meta">
+          <span class="tools-backup-name">${escapeHtml(b.name)}</span>
+          <span class="tools-backup-sub">${escapeHtml(b.instanceName || '')} · ${fmtSize(b.size || 0)} · ${formatDate(new Date(b.at || 0).toISOString())}</span>
+        </div>
+        <div class="tools-backup-actions">
+          <button type="button" class="btn btn-ghost btn-sm" data-action="restore">Restore</button>
+          <button type="button" class="btn btn-danger btn-sm btn-icon" data-action="delete" title="Delete backup">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+          </button>
+        </div>
+      </div>`).join('');
+    wrap.querySelectorAll('[data-action="restore"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const file = btn.closest('.tools-backup-row')?.dataset.file;
+        if (!file) return;
+        if (!await showConfirm({
+          title: 'Restore backup',
+          message: 'Restore this backup as a NEW instance? (non-destructive)',
+          confirmLabel: 'Restore',
+          danger: false
+        })) return;
+        const r = await window.zenon.restoreBackup(file);
+        if (r?.success) {
+          State.instances = await window.zenon.getInstances();
+          State.selectedInstance = r.instance || State.selectedInstance;
+          if (typeof window.syncSelectedInstanceWithList === 'function') window.syncSelectedInstanceWithList();
+          updateSidebarBadge();
+          showToast(`Restored “${r.instance?.name || 'backup'}” as a new instance`, 'success', 5000);
+          renderBackupsList();
+        } else {
+          showToast(`Restore failed: ${r?.error || 'unknown error'}`, 'error', 5000);
+        }
+      });
+    });
+    wrap.querySelectorAll('[data-action="delete"]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const file = btn.closest('.tools-backup-row')?.dataset.file;
+        if (!file) return;
+        if (!await showConfirm({ title: 'Delete backup', message: 'Delete this backup permanently?', confirmLabel: 'Delete' })) return;
+        const r = await window.zenon.deleteBackup(file);
+        if (r?.success) showToast('Backup deleted', 'info');
+        else showToast(`Delete failed: ${r?.error || 'unknown error'}`, 'error', 5000);
+        renderBackupsList();
+      });
+    });
+  };
+  renderBackupsList();
+  document.getElementById('tools-backup-now-btn')?.addEventListener('click', async () => {
+    if (!selected) return;
+    const r = await window.zenon.backupInstance(selected.id);
+    if (r?.success) {
+      showToast('Backup saved', 'success');
+      renderBackupsList();
+    } else {
+      showToast(`Backup failed: ${r?.error || 'unknown error'}`, 'error', 5000);
+    }
+  });
 
   document.getElementById('tools-open-selected-instance-btn')?.addEventListener('click', async () => {
     if (!selected) return;

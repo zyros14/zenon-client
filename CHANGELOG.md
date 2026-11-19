@@ -2,6 +2,55 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.4] - 2026-11-19
+
+### Changed
+- **Electron 28 → 45.** Jumps 17 major versions to a supported runtime (Chromium/Node 2+ years newer). No API changes affected the app: the renderer already runs with `contextIsolation` + no Node integration, and the preload only requires `electron`.
+- **Main process split into modules.** The 4,100-line `main.js` monolith is now `main/` modules by domain (`auth`, `instances`, `content`, `servers`, `forge`, `mcVersion`, `java`, `launch`, `discovery`, `skins`, `updater`, `window`, `ipc`, `settings`, `log`, `nativeFetch`, `bridge`, `constants`, `serverConfig`, `paths`) with pure helpers in `main/lib/` (`ram`, `text`, `versions`). Root `main.js` is a thin entry. No behavior changes intended — the 73 IPC channels and payloads are byte-identical, verified mechanically.
+- **`zenon-client/` nested duplicate removed** from the repo (a stale 1.0.8-era snapshot tracked in git; untracked artifacts on disk deleted). The working tree is now just the app.
+- **UI de-vibe pass.** Removed the marketing-garnish layer: the infinite marquee capability strip, "Modern Minecraft launcher" eyebrow, gradient headline text, checkmark trust row, kicker gradient bars, and the artificial 3–10 second *random* splash hold (now hides as soon as the UI is ready, min 400 ms — the splash also lost its Michroma "ZENON is loading" label). Emoji-as-icons in the edit-instance and skins panels replaced with consistent inline SVGs. Same Zenon identity, far less template.
+- **Tab switches no longer flash black.** `renderPage` previously wiped `#main-content` on every render, causing a flash of black/empty content between page swaps. Now the outgoing page fades out (100 ms) before the DOM is replaced, and the incoming page fades in (150 ms) — a smooth cross-fade instead of a flash. First render (boot) skips the exit fade since there is no previous page.
+
+### Fixed
+- **Forge version dropdown showed builds out of order.** `compareForgeFullIdDesc` parsed `47.3.0` as `47` for every build and fell back to descending string compare, so newer builds didn't sort correctly. Now compares dotted build segments numerically, newest first — as the function name always intended.
+- **Mojang snapshot ids like `25w02a` were not detected as snapshots** when the manifest was unavailable (Fabric `-snapshot` flag and type heuristics). The heuristic now recognizes the `YYwnnA` weekly format in addition to `rc`/`pre`/`beta`/`alpha`/`snapshot`.
+- **Instance display names lost newlines entirely** instead of converting them to spaces (the newline-collapse ran after control-char stripping, which ate newlines first). Order fixed to match the documented intent.
+
+### Added
+- **Unit test suite** (`npm test`, `node --test`) covering the extracted pure helpers — RAM parsing/clamping, text/token/UUID/JWT/skin-PNG helpers, version heuristics and modpack path safety. 29 tests.
+- **GitHub Actions CI** (`.github/workflows/ci.yml`): syntax check + unit tests on every push/PR, plus an unpacked `electron-builder --win --dir` smoke build.
+- `npm run check` — syntax-checks the main-process entry chain.
+- **Safe Mode launch.** A "Safe mode" button next to Play temporarily flips every enabled mod to `.disabled` for a single launch — the fastest way to diagnose a mod crash — and re-enables them automatically when the game exits.
+- **Total playtime tracking.** Instance cards and the instance detail header now show *total* time played (accumulated from spawn to exit each session) instead of "last played X ago". Instances with no tracked time show `0m played` (counting up from the first launch on this build).
+- **Zenon Sigils — SVG instance avatars.** The default instance avatar is no longer the third-party animated orb (`orb.png`, now removed); it's ours — eight inline-SVG sigils (Core, Orbit, Prism, Nova, Halo, Ember, Comet, Hex), picked deterministically per instance by id hash, selectable in the Edit instance icon picker, with legacy single-letter glyphs still rendering for older instances.
+- **Activity task manager.** A centralized, floating Activity panel (bottom-right) shows everything the launcher is doing: downloads, Java runtime provisioning, modpack installs, updates, launches — with progress, outcomes, and a short persisted history.
+- **Launch progress stepper.** The launch console now shows a live milestone strip — Account → Metadata → Loader → Java → Files → Running — driven by new `launch-progress` events from the main process, instead of raw console spam alone.
+- **Java runtime downloads surface as tasks.** The `[Zenon] Downloading Java N runtime — NN%` console lines now feed the Activity panel.
+- **Crash analysis + history.** Non-zero exits are pattern-matched against 8 known failure signatures (OOM, wrong Java, access violation, mixin failure, mod crash, duplicate mods, audio, GL). Records are persisted to `crash-history.json` (capped at 50) and surfaced on the instance **Logs** tab with a headline + fix hint and a Clear button.
+- **Instance backups + restore.** Zip snapshots per instance under app-data `backups/<id>/…zip`; restore is **non-destructive** — it extracts into a brand-new instance ("name (restored)"). Create from the instance header (archive icon) or Tools → Backups; restore/delete from the same panel.
+- **CurseForge modpack installs** — the "Modpacks" type is no longer disabled on CurseForge (Discovery, instance browser, browse modal). `main/cf-modpack.js` mirrors the .mrpack flow: downloads the pack zip, parses `manifest.json` (game + loader + recommended RAM → sets per-instance `maxRamOverride`), resolves every required `projectID/fileID` through the proxy to `fileName` + `downloadUrl`, downloads 4-way-concurrent into `mods/`, and deploys `overrides/` path-safely. Rolls back (deletes the instance, rethrows) if **zero** required files resolved; otherwise keeps the pack and reports installed/failed counts. IPC `install-cf-modpack`; `window.zenon.installCfModpack`.
+  - **Verified end-to-end against the live proxy** with DeceasedCraft Beta (1.20.1 / Forge, 317 required files, 114 MB pack): 306/317 installed in ~99 s, 5,871 override files extracted, manifest parsed cleanly. **11 files the authors locked from third-party API distribution** returned fileName but **no downloadUrl** (metadata-only `fileStatus` guard on CurseForge's side) — every API launcher skips them the same way; the installer reports each by filename as `distribution-locked` and keeps the pack usable.
+- **.mrpack export.** `Edit instance → Share as .mrpack` builds a Modrinth modpack: every mod jar's sha1 is looked up on Modrinth's `version_file` endpoint (exact match — url/sha512/size/env); unmatched files ship as overrides; `modrinth.index.json` + `overrides/` written to a user-chosen `.mrpack` path.
+- **Update all mods.** One click on the instance Content tab checks every installed Modrinth/CF mod against its latest compatible version; skips up-to-date files by sha1, replaces the rest in place, refreshes meta, and reports via toast + Activity task.
+- **Error-aware log viewer.** Logs pane gains All / Warnings+Errors / Errors-only tabs, error+warning counts, and a one-click Copy of the full log; matching lines are highlighted with an accent border.
+- **Multi-instance running indicators.** Live "Running" pill on Library cards and Home recent cards, pulsing dot on sidebar Recents; per-game Stop targets the selected instance (most-recent default preserved for existing callers); `get-running-instances` IPC + `stopGameInstance`.
+- **Richer notifications.** Java runtime install success toast; non-zero-exit toast pointing at the log; Activity tasks for update download progress/completion/failure.
+- **Mod Intelligence pane.** Select an instance → Library → "Mod Intelligence" runs an on-demand scan that flags incompatible mods (no version compatible with the instance's MC version + loader), missing required dependencies (Modrinth), duplicate installs (by project id and jar mod-id), outdated mods (local sha1 vs latest compatible version), and crash suspects (mods named in `latest.log` error/stack lines, evidence-based), plus compatible alternative recommendations you can install straight from the panel. IPC `mod:intelligence`; `window.zenon.getModIntelligence(instanceId)`; pure analysis helpers in `main/mod-intelligence.js` (unit-tested).
+- **Global Command Palette (Ctrl+K).** Quick access to any launcher action — launch, safe mode, stop, new/duplicate/edit/backup instance, update all mods, Mod Intelligence scan, browse mods, Home/Library/Discovery/Settings, toggle console, quit. Fuzzy search with keyboard nav (↑/↓/Enter/Esc).
+- **World Manager.** Library → instance → Worlds is now a full manager: rename, delete, export to zip, and import world zips into `saves/`, with per-world size, last-modified, and validity info. IPC `world:rename`, `world:delete`, `world:export`, `world:import`, `world:info`.
+- **Activity panel auto-hides.** The floating Activity FAB appears when a download, update, launch, or modpack install starts, and automatically hides 30 seconds after the last task finishes. New activity resets the countdown.
+
+### Fixed
+- **CurseForge search silently forced "Modpacks" back to "Mods".** A leftover guard in `runDiscoverySearch()` reset the selected type to `mod` whenever the source was CurseForge, so CF modpack searches returned mods. Removed; the CF modpack classId (4471) is now actually exercised.
+- **Launch wrapper hook works.** The `Wrapper` instance setting was never applied (it logged nothing and launched plain). On Windows it now generates a shim batch that answers MCLC's `-version` probe truthfully and otherwise execs `<wrapper> "<java>" <game args>` — e.g. `mangohud java -Xmx2G …`. Ignored with a clear message on non-Windows.
+- **Update reminder toggle is real.** Settings → Updates previously showed a hard-wired "on" switch with `data-hard-on="true"`; the banner/install reminder is now gated on the persisted `updateReminder` setting (default on), across restart, manual check, and auto-download paths.
+
+### Notes
+- Windows installer is not code-signed yet — SmartScreen will flag it on first run ("More info → Run anyway").
+- Visual verification of the redesigned Home / Library / icon picker has **not been done from this build** — worth a quick look in the real app.
+
+---
+
 ## [1.1.3] - 2026-11-18
 
 ### Fixed

@@ -104,6 +104,7 @@ getAppInfo: () => ipcRenderer.invoke('app:get-version'),
   getMods: (instanceId) => ipcRenderer.invoke('get-mods', instanceId),
   toggleMod: (instanceId, filename) => ipcRenderer.invoke('toggle-mod', { instanceId, filename }),
   deleteMod: (instanceId, filename) => ipcRenderer.invoke('delete-mod', { instanceId, filename }),
+  getModIntelligence: (instanceId) => ipcRenderer.invoke('mod:intelligence', instanceId),
   getContent: (instanceId, kind) => ipcRenderer.invoke('get-content', { instanceId, kind }),
   toggleContent: (instanceId, kind, filename) => ipcRenderer.invoke('toggle-content', { instanceId, kind, filename }),
   deleteContent: (instanceId, kind, filename) => ipcRenderer.invoke('delete-content', { instanceId, kind, filename }),
@@ -118,16 +119,37 @@ searchCurseforge: (params) => ipcRenderer.invoke('search-curseforge', params),
   listInstanceRoot: (instanceId) => ipcRenderer.invoke('list-instance-root', instanceId),
   listInstanceWorlds: (instanceId) => ipcRenderer.invoke('list-instance-worlds', instanceId),
   readInstanceLatestLog: (instanceId) => ipcRenderer.invoke('read-instance-latest-log', instanceId),
+  worldRename: (instanceId, oldName, newName) => ipcRenderer.invoke('world:rename', { instanceId, oldName, newName }),
+  worldDelete: (instanceId, worldName) => ipcRenderer.invoke('world:delete', { instanceId, worldName }),
+  worldExport: (instanceId, worldName) => ipcRenderer.invoke('world:export', { instanceId, worldName }),
+  worldImport: (instanceId, zipPath) => ipcRenderer.invoke('world:import', { instanceId, zipPath }),
   downloadMod: (instanceId, versionData, meta = null) => ipcRenderer.invoke('download-mod', { instanceId, versionData, meta }),
   downloadContent: (instanceId, kind, versionData, meta = null) => ipcRenderer.invoke('download-content', { instanceId, kind, versionData, meta }),
   createInstanceFromMrpack: (payload) => ipcRenderer.invoke('create-instance-from-mrpack', payload),
 
   // Launcher
   launchGame: (instanceId) => ipcRenderer.invoke('launch-game', instanceId),
+  launchGameSafe: (instanceId) => ipcRenderer.invoke('launch-game-safe', { instanceId }),
   launchGameWithServer: (instanceId, host, port) => ipcRenderer.invoke('launch-game-with-server', { instanceId, host, port }),
   stopGame: () => ipcRenderer.invoke('launch-stop'),
+  stopGameInstance: (instanceId) => ipcRenderer.invoke('launch-stop', instanceId),
+  getRunningInstances: () => ipcRenderer.invoke('get-running-instances'),
+  backupInstance: (instanceId) => ipcRenderer.invoke('backup-instance', instanceId),
+  listBackups: (instanceId) => ipcRenderer.invoke('backup:list', instanceId),
+  restoreBackup: (file) => ipcRenderer.invoke('backup:restore', file),
+  deleteBackup: (file) => ipcRenderer.invoke('backup:delete', file),
+  exportInstanceMrpack: (instanceId) => ipcRenderer.invoke('instance-export-mrpack', instanceId),
+  installCfModpack: (payload) => ipcRenderer.invoke('install-cf-modpack', payload),
+  updateAllMods: (instanceId) => ipcRenderer.invoke('instance-update-mods', instanceId),
+  listCrashes: (instanceId) => ipcRenderer.invoke('crash:list', instanceId),
+  clearCrashes: () => ipcRenderer.invoke('crash:clear'),
   onLaunchLog: (cb) => ipcRenderer.on('launch-log', (_, data) => cb(data)),
   onLaunchClose: (cb) => ipcRenderer.on('launch-close', (_, data) => cb(data)),
+  onLaunchProgress: (cb) => {
+    const listener = (_event, payload) => cb(payload);
+    ipcRenderer.on('launch-progress', listener);
+    return () => ipcRenderer.removeListener('launch-progress', listener);
+  },
   removeLaunchListeners: () => {
     ipcRenderer.removeAllListeners('launch-log');
     ipcRenderer.removeAllListeners('launch-close');

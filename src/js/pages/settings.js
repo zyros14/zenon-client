@@ -175,7 +175,7 @@ async function renderSettings() {
             <p>Show a banner when a downloaded update is ready to install</p>
           </div>
           <div class="settings-control" style="width:auto">
-            <div class="toggle-switch on" id="set-update-reminder" data-hard-on="true"></div>
+            <div class="toggle-switch ${settings.updateReminder === false ? '' : 'on'}" id="set-update-reminder"></div>
           </div>
         </div>
       </div>
@@ -206,6 +206,8 @@ async function renderSettings() {
   });
   const autoCheckToggle = document.getElementById('set-auto-check-updates');
   autoCheckToggle?.addEventListener('click', () => autoCheckToggle.classList.toggle('on'));
+  const updateReminderToggle = document.getElementById('set-update-reminder');
+  updateReminderToggle?.addEventListener('click', () => updateReminderToggle.classList.toggle('on'));
 
   // Save
   document.getElementById('settings-save-btn').addEventListener('click', async () => {
@@ -218,7 +220,8 @@ async function renderSettings() {
       minRam: document.getElementById('set-min-ram').value,
       theme: typeof normalizeThemeId === 'function' ? normalizeThemeId(themeRaw) : themeRaw,
       closeOnLaunch: closeToggle.classList.contains('on'),
-      autoCheckUpdates: autoCheckToggle?.classList.contains('on') !== false
+      autoCheckUpdates: autoCheckToggle?.classList.contains('on') !== false,
+      updateReminder: updateReminderToggle?.classList.contains('on') !== false
     };
     delete newSettings.username;
     delete newSettings.offlineEnabled;
@@ -245,7 +248,8 @@ async function renderSettings() {
       minRam: '512M',
       theme: 'zenon',
       closeOnLaunch: false,
-      autoCheckUpdates: true
+      autoCheckUpdates: true,
+      updateReminder: true
     };
     delete defaults.username;
     delete defaults.offlineEnabled;

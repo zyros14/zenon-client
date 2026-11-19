@@ -32,7 +32,7 @@ async function renderHome() {
         Play now
       </button>
       <button class="btn btn-ghost" id="hero-open-library" style="width:100%;justify-content:center">
-        Open library <span class="arrow" aria-hidden="true">&#8599;</span>
+        Open library
       </button>
     </div>`
     : `
@@ -42,51 +42,52 @@ async function renderHome() {
         Create an instance to start playing — it takes about ten seconds.
       </div>
       <button class="btn btn-primary sic-play" id="hero-new-instance-side">
-        New instance <span class="arrow" aria-hidden="true">&#8599;</span>
+        New instance
       </button>
     </div>`;
 
   const emptyState = instances.length === 0
     ? `
-    <div class="reveal">
-      <div class="section-kicker">Getting started</div>
-      <div class="process-list">
-        <div class="process-item">
-          <span class="process-num">1</span>
+    <div>
+      <h2 class="getting-started-title">Getting started</h2>
+      <ol class="getting-started-list">
+        <li>
+          <span class="gs-num">1</span>
           <div>
             <div class="process-title">Create an instance</div>
             <p class="process-desc">Pick a Minecraft version and a loader — Vanilla, Fabric, or Forge. Everything is scoped to its own folder.</p>
           </div>
-        </div>
-        <div class="process-item">
-          <span class="process-num">2</span>
+        </li>
+        <li>
+          <span class="gs-num">2</span>
           <div>
             <div class="process-title">Make it yours</div>
             <p class="process-desc">Browse Modrinth for mods, shaders and packs. Required dependencies install themselves.</p>
           </div>
-        </div>
-        <div class="process-item">
-          <span class="process-num">3</span>
+        </li>
+        <li>
+          <span class="gs-num">3</span>
           <div>
             <div class="process-title">Press play</div>
             <p class="process-desc">Java, assets and libraries are handled automatically. The launch console shows every step.</p>
           </div>
-        </div>
-      </div>
+        </li>
+      </ol>
     </div>`
     : `
-    <div class="recent-section reveal">
+    <div class="recent-section">
       <h2>Recent instances</h2>
       <div class="recent-instances" id="recent-instances-grid">
         ${instances.slice(0, 6).map((inst) => `
-          <div class="recent-instance-card" data-id="${inst.id}">
+          <div class="recent-instance-card ${State.runningInstanceIds.has(inst.id) ? 'is-running' : ''}" data-id="${inst.id}">
+            ${State.runningInstanceIds.has(inst.id) ? '<span class="ric-running-dot" title="Game is running"><span class="ric-running-label">Running</span></span>' : ''}
             <div class="ric-icon">${getInstanceIcon(inst)}</div>
             <div class="ric-name">${escapeHtml(inst.name)}</div>
             <div class="ric-meta">
               <span class="tag tag-version">${escapeHtml(inst.version)}</span>
               ${loaderTag(inst.loader)}
             </div>
-            <div class="ric-meta" style="margin-top:4px">Played ${formatDate(inst.lastPlayed)}</div>
+            <div class="ric-meta" style="margin-top:4px">${typeof playTimeLabel === 'function' ? playTimeLabel(inst) : ''}</div>
           </div>
         `).join('')}
       </div>
@@ -97,21 +98,15 @@ async function renderHome() {
       <header class="home-hero">
         <div class="hero-layout">
           <div class="hero-copy">
-            <span class="eyebrow">Modern Minecraft launcher</span>
-            <h1>Less setup.<br><span class="gradient-text">More Minecraft.</span></h1>
-            <p>Instances, mods, shaders and servers — managed in one clean place and launched in a single click.</p>
+            <h1>Less setup.<br>More Minecraft.</h1>
+            <p>Instances, mods, shaders and servers — managed in one place and launched in a single click.</p>
             <div class="hero-actions">
               <button class="btn btn-primary btn-lg" id="hero-launch-btn">
-                ${sel ? `Play ${escapeHtml(sel.name)}` : 'Pick an instance'} <span class="arrow" aria-hidden="true">&#8599;</span>
+                ${sel ? `Play ${escapeHtml(sel.name)}` : 'Pick an instance'}
               </button>
               <button class="btn btn-ghost btn-lg" id="hero-new-instance-btn">
-                New instance <span class="arrow" aria-hidden="true">&#8599;</span>
+                New instance
               </button>
-            </div>
-            <div class="hero-trust">
-              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Fabric &amp; Forge ready</span>
-              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Modrinth built in</span>
-              <span class="trust-item"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>Java handled for you</span>
             </div>
           </div>
           <div class="hero-side">
@@ -120,15 +115,7 @@ async function renderHome() {
         </div>
       </header>
 
-      <div class="marquee reveal" aria-hidden="true">
-        <div class="marquee-track">
-          ${['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'One-click play', 'Live launch console']
-            .concat(['Custom instances', 'Modrinth mods', 'Shaders & packs', 'Dedicated servers', 'Auto Java runtime', 'One-click play', 'Live launch console'])
-            .map((t) => `<span class="marquee-item">${t}</span>`).join('')}
-        </div>
-      </div>
-
-      <div class="stats-row reveal">
+      <div class="stats-row">
         <div class="stat-card">
           <div class="stat-icon stat-icon-blue">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
