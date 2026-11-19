@@ -1,15 +1,11 @@
 // ===== Skin animation: superhero float =====
-// Continuous "flying" idle: forward lean, trailing limbs, billowing cape.
-// Layered sine noise instead of single sines so nothing repeats in an
-// obviously loopy way. Turn reaction is spring-damped (not a raw per-frame
-// delta) so fast drags settle smoothly instead of snapping/jittering.
-// Random micro-gestures (weight shift, head tilt, shoulder roll, stretch)
-// fire on a random timer and fade in/out, so the idle never looks static
-// or robotically looped even over a long time.
+// Organic, alive-feeling idle: forward-lean float with breathing, weight shifts,
+// reactive turn response, and random micro-gestures. Nothing repeats on a short
+// cycle; everything is layered noise + spring-damped reaction.
 import { FunctionAnimation } from 'skinview3d';
 
-// Smooth pseudo-noise: sum of a few incommensurate sine frequencies.
-// Looks organic, never repeats on a short, noticeable cycle.
+// ---- Smooth pseudo-noise: sum of incommensurate sines. Organic, never loops.
+//-----------------------------------------------------------------------------
 function noise(t, seed = 0) {
   return (
     Math.sin(t * 0.9 + seed) * 0.5 +
@@ -18,8 +14,8 @@ function noise(t, seed = 0) {
   );
 }
 
-// Critically-ish damped spring: chases `target`, smooths out spikes
-// (e.g. a fast mouse-drag yaw change) instead of reacting 1:1 to them.
+// Critically damped spring: chases `target`, smooths spikes so fast drags
+// settle smoothly instead of snapping.
 function spring(value, velocity, target, stiffness, damping, dt) {
   const force = (target - value) * stiffness - velocity * damping;
   const newVel = velocity + force * dt;
@@ -27,22 +23,28 @@ function spring(value, velocity, target, stiffness, damping, dt) {
   return [newVal, newVel];
 }
 
-const GESTURES = ['weightShift', 'headTilt', 'shoulderRoll', 'stretch'];
+const GESTURES = ['weightShift', 'headTilt', 'shoulderRoll', 'stretch', 'lookAround', 'breathHitch'];
 
 export function makeFloat() {
-  // Turn tracking
+  // Turn tracking (spring-damped)
   let lastYaw = 0;
-  let turnVel = 0, turnVelVel = 0;   // smoothed yaw velocity
-  let leanVal = 0, leanVel = 0;      // body lean spring (reacts to turnVel)
-  let swapVal = 0, swapVel = 0;      // limb-swap spring (reacts to turnVel)
+  let turnVel = 0, turnVelVel = 0;
+  let leanVal = 0, leanVel = 0;
+  let swapVal = 0, swapVel = 0;
 
-  // Random micro-idle gesture state
+  // Micro-gesture state
   let gesture = null;
-  let nextGestureAt = 2 + Math.random() * 3;
+  let nextGestureAt = 1.5 + Math.random() * 2.5;
 
-  // FunctionAnimation calls back with (player, time, delta), both in seconds.
+  // Breath cycle (inhale → hold → exhale → rest, ~5-7s, not perfectly periodic)
+  let breathPhase = 0;
+  let breathRate = 0.6 + Math.random() * 0.4;
+
+  // Subtle "aliveness" offset so two skins never move identically
+  const soulOffset = Math.random() * Math.PI * 2;
+
   return new FunctionAnimation((player, time, delta) => {
-    const dt = Math.min(delta || 0.016, 0.05); // clamp so a lag spike can't fling the springs
+    const dt = Math.min(delta || 0.016, 0.05);
     const clock = time || 0;
 
     const wrapper = player.playerWrapper;
@@ -50,114 +52,140 @@ export function makeFloat() {
     const rawYawVel = dt > 0 ? (currentYaw - lastYaw) / dt : 0;
     lastYaw = currentYaw;
 
-    // Smooth the raw yaw velocity itself before anything reacts to it.
+    // Smooth yaw velocity before anything reacts
     [turnVel, turnVelVel] = spring(turnVel, turnVelVel, rawYawVel, 40, 10, dt);
     const turn = Math.max(-1, Math.min(1, turnVel * 1.2));
 
-    // Lean and limb-swap each chase the smoothed turn with their own spring,
-    // so they overshoot slightly and settle — feels reactive, not snappy.
-    [leanVal, leanVel] = spring(leanVal, leanVel, turn, 60, 12, dt);
-    [swapVal, swapVel] = spring(swapVal, swapVel, turn, 25, 8, dt);
+    // Springs chase the smoothed turn
+    [leanVal, leanVel] = spring(leanVal, leanVel, turn, 55, 11, dt);
+    [swapVal, swapVel] = spring(swapVal, swapVel, turn, 22, 7, dt);
 
-    // ---- Superhero float base pose ----
-    const floatBob = Math.sin(clock * 0.9) * 0.12 + Math.sin(clock * 0.37) * 0.05;
-    const driftX = noise(clock * 0.3, 11) * 0.015;
-    const driftZ = noise(clock * 0.25, 42) * 0.02;
+    // ---- Breath: inhale (chest up) → hold → exhale → rest ------------------
+    breathPhase += dt * breathRate;
+    if (breathPhase > Math.PI * 2 + Math.random() * 1) {
+      breathPhase = 0;
+      breathRate = 0.5 + Math.random() * 0.5;
+    }
+    const breath = Math.sin(breathPhase); // -1 → 1, smooth
+    const inhale = Math.max(0, breath);   // chest rises
+    const exhale = Math.max(0, -breath);  // chest falls
 
-    player.position.y = floatBob;
+    // ---- Base float: gentle hover + organic drift --------------------------
+    const bob = Math.sin(clock * 0.9 + soulOffset) * 0.11 + Math.sin(clock * 0.37 + soulOffset * 0.7) * 0.04;
+    const driftX = noise(clock * 0.28 + soulOffset, 11) * 0.018;
+    const driftZ = noise(clock * 0.22 + soulOffset, 42) * 0.025;
+
+    player.position.y = bob;
     player.position.x = driftX;
+    player.position.z = driftZ;
 
-    // Forward chest-up lean, like mid-flight.
-    player.skin.body.rotation.x = -0.1 + noise(clock * 0.5, 3) * 0.02;
-    player.skin.body.rotation.y = noise(clock * 0.4, 7) * 0.05;
-    player.skin.body.rotation.z = noise(clock * 0.33, 19) * 0.025;
-    player.skin.body.position.y = -6 + Math.sin(clock * 1.3) * 0.08;
-    player.skin.body.position.z = driftZ;
+    // ---- Body: forward lean + breathing chest ------------------------------
+    player.skin.body.rotation.x = -0.12 + inhale * 0.04 + noise(clock * 0.5 + soulOffset, 3) * 0.015;
+    player.skin.body.rotation.y = noise(clock * 0.38 + soulOffset, 7) * 0.045;
+    player.skin.body.rotation.z = noise(clock * 0.3 + soulOffset, 19) * 0.02;
+    player.skin.body.position.y = -6 + inhale * 0.05;
+    player.skin.body.position.z = driftZ * 0.5;
 
-    player.skin.head.rotation.x = -0.08 + noise(clock * 0.6, 5) * 0.03;
-    player.skin.head.rotation.y = noise(clock * 0.45, 9) * 0.06;
-    player.skin.head.rotation.z = noise(clock * 0.3, 2) * 0.015;
+    // ---- Head: independent look-around, follows body softly ----------------
+    player.skin.head.rotation.x = -0.07 + exhale * 0.02 + noise(clock * 0.55 + soulOffset, 5) * 0.025;
+    player.skin.head.rotation.y = noise(clock * 0.42 + soulOffset, 9) * 0.05;
+    player.skin.head.rotation.z = noise(clock * 0.28 + soulOffset, 2) * 0.012;
 
-    // Arms trail back/out like mid-flight, each with its own drift so they
-    // never move as a mirrored pair.
-    player.skin.leftArm.rotation.x = -0.15 + noise(clock * 0.5, 13) * 0.03;
-    player.skin.rightArm.rotation.x = -0.15 - noise(clock * 0.5, 14) * 0.03;
-    player.skin.leftArm.rotation.z = Math.PI * 0.05 + noise(clock * 0.6, 21) * 0.02;
-    player.skin.rightArm.rotation.z = -Math.PI * 0.05 - noise(clock * 0.6, 23) * 0.02;
-    player.skin.leftArm.rotation.y = 0.04 + noise(clock * 0.4, 17) * 0.015;
-    player.skin.rightArm.rotation.y = -0.04 - noise(clock * 0.4, 25) * 0.015;
+    // ---- Arms: trail back/out, never mirrored ------------------------------
+    const armNoiseL = noise(clock * 0.48 + soulOffset, 13);
+    const armNoiseR = noise(clock * 0.48 + soulOffset, 14);
+    player.skin.leftArm.rotation.x = -0.16 + armNoiseL * 0.03;
+    player.skin.rightArm.rotation.x = -0.16 - armNoiseR * 0.03;
+    player.skin.leftArm.rotation.z = Math.PI * 0.055 + noise(clock * 0.58 + soulOffset, 21) * 0.018;
+    player.skin.rightArm.rotation.z = -Math.PI * 0.055 - noise(clock * 0.58 + soulOffset, 23) * 0.018;
+    player.skin.leftArm.rotation.y = 0.05 + noise(clock * 0.36 + soulOffset, 17) * 0.012;
+    player.skin.rightArm.rotation.y = -0.05 - noise(clock * 0.36 + soulOffset, 25) * 0.012;
 
-    // Legs trail loosely, feet relaxed.
-    player.skin.leftLeg.rotation.x = 0.06 + noise(clock * 0.5, 29) * 0.02;
-    player.skin.rightLeg.rotation.x = 0.06 - noise(clock * 0.5, 31) * 0.02;
-    player.skin.leftLeg.rotation.z = 0.015 + noise(clock * 0.35, 33) * 0.01;
-    player.skin.rightLeg.rotation.z = -0.015 - noise(clock * 0.35, 35) * 0.01;
+    // ---- Legs: loose, relaxed ---------------------------------------------
+    player.skin.leftLeg.rotation.x = 0.05 + noise(clock * 0.5 + soulOffset, 29) * 0.015;
+    player.skin.rightLeg.rotation.x = 0.05 - noise(clock * 0.5 + soulOffset, 31) * 0.015;
+    player.skin.leftLeg.rotation.z = 0.01 + noise(clock * 0.33 + soulOffset, 33) * 0.008;
+    player.skin.rightLeg.rotation.z = -0.01 - noise(clock * 0.33 + soulOffset, 35) * 0.008;
 
-    // Cape billows like it's catching wind.
-    player.cape.rotation.x = Math.PI * 0.08 + Math.sin(clock * 0.8) * 0.03 + noise(clock * 1.2, 4) * 0.02;
-    player.cape.rotation.z = noise(clock * 0.5, 6) * 0.03;
+    // ---- Cape: billowing, catches wind -------------------------------------
+    player.cape.rotation.x = Math.PI * 0.09 + Math.sin(clock * 0.75 + soulOffset) * 0.035 + noise(clock * 1.1 + soulOffset, 4) * 0.025;
+    player.cape.rotation.z = noise(clock * 0.48 + soulOffset, 6) * 0.035;
+    player.cape.rotation.y = noise(clock * 0.35 + soulOffset, 10) * 0.015;
 
-    // ---- Random micro-idle gestures, layered on top ----
+    // ---- Random micro-idle gestures ---------------------------------------
     if (!gesture && clock >= nextGestureAt) {
       gesture = {
         type: GESTURES[Math.floor(Math.random() * GESTURES.length)],
         start: clock,
-        duration: 1.6 + Math.random() * 1.2,
+        duration: 1.4 + Math.random() * 1.6,
       };
     }
     if (gesture) {
       const t = (clock - gesture.start) / gesture.duration;
       if (t >= 1) {
         gesture = null;
-        nextGestureAt = clock + 3 + Math.random() * 4;
+        nextGestureAt = clock + 2.5 + Math.random() * 4;
       } else {
         const env = Math.sin(Math.PI * Math.min(1, Math.max(0, t))); // smooth in → out
         applyGesture(player, gesture.type, env, clock);
       }
     }
 
-    // ---- Turn reaction: lean + slight limb-swap, like catching your balance ----
-    player.skin.body.rotation.z += -leanVal * 0.16;
-    player.skin.body.rotation.y += leanVal * 0.14;
+    // ---- Turn reaction: lean into turns, catch balance ---------------------
+    player.skin.body.rotation.z += -leanVal * 0.18;
+    player.skin.body.rotation.y += leanVal * 0.16;
 
-    // Just enough counter-swing in arms/legs to read as a weight shift —
-    // not a full walk cycle, just a reactive flicker.
-    player.skin.leftArm.rotation.x += swapVal * 0.12;
-    player.skin.rightArm.rotation.x -= swapVal * 0.12;
-    player.skin.leftLeg.rotation.x -= swapVal * 0.08;
-    player.skin.rightLeg.rotation.x += swapVal * 0.08;
+    player.skin.leftArm.rotation.x += swapVal * 0.14;
+    player.skin.rightArm.rotation.x -= swapVal * 0.14;
+    player.skin.leftLeg.rotation.x -= swapVal * 0.06;
+    player.skin.rightLeg.rotation.x += swapVal * 0.06;
 
-    player.skin.head.rotation.y += leanVal * 0.18;
-    player.skin.head.rotation.x += Math.abs(leanVal) * 0.02;
+    player.skin.head.rotation.y += leanVal * 0.2;
+    player.skin.head.rotation.x += Math.abs(leanVal) * 0.025;
 
-    player.cape.rotation.z += leanVal * 0.08;
-    player.cape.rotation.x += Math.abs(leanVal) * 0.05;
+    player.cape.rotation.z += leanVal * 0.1;
+    player.cape.rotation.x += Math.abs(leanVal) * 0.06;
   });
 }
 
 function applyGesture(player, type, env, clock) {
   switch (type) {
     case 'weightShift': {
-      const s = Math.sin(clock * 2.0) > 0 ? 1 : -1;
-      player.skin.body.position.z += s * env * 0.08;
-      player.skin.leftLeg.rotation.z += s * env * 0.05;
-      player.skin.rightLeg.rotation.z -= s * env * 0.05;
+      const s = Math.sin(clock * 1.8 + soulOffset) > 0 ? 1 : -1;
+      player.skin.body.position.z += s * env * 0.09;
+      player.skin.leftLeg.rotation.z += s * env * 0.06;
+      player.skin.rightLeg.rotation.z -= s * env * 0.06;
+      player.skin.body.rotation.x += s * env * 0.02;
       break;
     }
     case 'headTilt':
-      player.skin.head.rotation.z += env * 0.12;
-      player.skin.head.rotation.y += env * 0.08;
+      player.skin.head.rotation.z += env * 0.14;
+      player.skin.head.rotation.y += env * 0.09;
+      player.skin.head.rotation.x -= env * 0.03;
       break;
     case 'shoulderRoll':
-      player.skin.leftArm.rotation.z -= env * 0.08;
-      player.skin.rightArm.rotation.z += env * 0.04;
-      player.skin.leftArm.rotation.x -= env * 0.06;
+      player.skin.leftArm.rotation.z -= env * 0.1;
+      player.skin.rightArm.rotation.z += env * 0.05;
+      player.skin.leftArm.rotation.x -= env * 0.07;
+      player.skin.rightArm.rotation.x += env * 0.03;
       break;
     case 'stretch':
-      player.skin.body.rotation.x -= env * 0.05;
-      player.skin.leftArm.rotation.z -= env * 0.15;
-      player.skin.rightArm.rotation.z += env * 0.1;
-      player.skin.head.rotation.x -= env * 0.04;
+      player.skin.body.rotation.x -= env * 0.06;
+      player.skin.leftArm.rotation.z -= env * 0.18;
+      player.skin.rightArm.rotation.z += env * 0.12;
+      player.skin.head.rotation.x -= env * 0.05;
+      player.skin.body.position.y += env * 0.02;
+      break;
+    case 'lookAround':
+      player.skin.head.rotation.y += env * 0.15;
+      player.skin.head.rotation.x += env * 0.04;
+      player.skin.body.rotation.y += env * 0.03;
+      break;
+    case 'breathHitch':
+      // Sudden sharp exhale then slow inhale — breaks the breathing loop
+      player.skin.body.rotation.x += env * 0.04;
+      player.skin.body.position.y -= env * 0.03;
+      player.skin.head.rotation.x += env * 0.03;
       break;
   }
 }
