@@ -28,35 +28,71 @@ function makeFloat() {
     const yawDiff = currentYaw - lastYaw;
     lastYaw = currentYaw;
 
-    // How hard the model is turning right now (-1 to 1).
-    const turn = Math.max(-1, Math.min(1, yawDiff * 6));
+    // Turn strength (-1 to 1): how fast the model is being turned right now.
+    const turn = Math.max(-1, Math.min(1, yawDiff * 8));
 
-    // Base float: gentle up/down bobbing.
-    player.position.y = Math.sin(hoverTime * 1.1) * 0.14;
+    // ---- Base pose: relaxed stance ----
+    player.skin.body.rotation.y = 0.06;
+    player.skin.body.rotation.x = 0.01;
+    player.skin.body.position.y = -6;
+    player.skin.body.position.z = 0;
 
-    // Gentle whole-body sway when not turning hard.
-    player.skin.body.rotation.y = Math.sin(hoverTime * 0.6) * 0.02 + turn * 0.06;
+    player.skin.head.rotation.y = 0;
+    player.skin.head.rotation.x = -0.04;
 
-    // Lean into turns.
-    player.skin.body.rotation.z = -turn * 0.1;
-    player.skin.body.rotation.x = Math.sin(hoverTime * 1.4) * 0.012;
+    player.skin.leftArm.rotation.z = Math.PI * 0.04;
+    player.skin.rightArm.rotation.z = -Math.PI * 0.04;
+    player.skin.leftArm.rotation.x = 0.01;
+    player.skin.rightArm.rotation.x = -0.01;
+    player.skin.leftArm.rotation.y = 0.02;
+    player.skin.rightArm.rotation.y = -0.02;
 
-    // Arms: drift and react to turn.
-    const armDrift = Math.sin(hoverTime * 0.9 + 1) * 0.03;
-    player.skin.leftArm.rotation.z = Math.PI * 0.02 + armDrift + turn * 0.06;
-    player.skin.rightArm.rotation.z = -Math.PI * 0.02 - armDrift - turn * 0.06;
-    player.skin.leftArm.rotation.x = Math.sin(hoverTime * 0.8 + 0.8) * 0.025;
-    player.skin.rightArm.rotation.x = Math.sin(hoverTime * 0.8) * -0.025;
-    player.skin.leftArm.rotation.y = Math.sin(hoverTime * 0.5 + 1.4) * 0.015;
-    player.skin.rightArm.rotation.y = -Math.sin(hoverTime * 0.5 + 1.4) * 0.015;
+    player.skin.leftLeg.rotation.x = 0;
+    player.skin.rightLeg.rotation.x = 0;
+    player.skin.leftLeg.rotation.z = 0.01;
+    player.skin.rightLeg.rotation.z = -0.01;
 
-    // Head: look around + react to turn direction.
-    player.skin.head.rotation.y = Math.sin(hoverTime * 0.4 + 0.6) * 0.06 + turn * 0.12;
-    player.skin.head.rotation.x = Math.sin(hoverTime * 0.55 + 1.4) * 0.025;
+    player.cape.rotation.x = Math.PI * 0.05;
+    player.cape.rotation.z = 0;
 
-    // Cape: gentle breath, tilts slightly in turns.
-    player.cape.rotation.x = Math.sin(hoverTime * 0.7) * 0.025 + Math.PI * 0.06;
-    player.cape.rotation.z = turn * 0.03;
+    // ---- Sway: continuous independent motion ----
+    const sway = Math.sin(hoverTime * 0.7) * 0.025;
+    const breathe = Math.sin(hoverTime * 1.3) * 0.018;
+    const bob = Math.sin(hoverTime * 1.0) * 0.1;
+
+    player.position.y = bob;
+    player.skin.body.rotation.y = 0.06 + sway;
+    player.skin.body.rotation.x = 0.01 + breathe;
+    player.skin.body.position.y = -6 + breathe * 0.06;
+
+    // Weight shift: hips sway opposite to torso.
+    player.skin.body.position.z = sway * 0.6;
+    player.skin.leftLeg.rotation.z = 0.01 + sway * 0.4;
+    player.skin.rightLeg.rotation.z = -0.01 - sway * 0.4;
+
+    // Arms sway opposite to the body's sway.
+    player.skin.leftArm.rotation.z = Math.PI * 0.04 - sway * 0.5;
+    player.skin.rightArm.rotation.z = -Math.PI * 0.04 + sway * 0.5;
+
+    // Head follows sway softly, slight nod with breath.
+    player.skin.head.rotation.y = sway * 0.25;
+    player.skin.head.rotation.x = -0.04 + breathe * 0.6;
+
+    // Cape breathes gently.
+    player.cape.rotation.x = Math.PI * 0.05 + Math.sin(hoverTime * 1.1) * 0.02;
+
+    // ---- Turn reaction: lean into the turn ----
+    player.skin.body.rotation.z = -turn * 0.14;
+    player.skin.body.rotation.y += turn * 0.12;
+
+    player.skin.leftArm.rotation.z += turn * 0.09;
+    player.skin.rightArm.rotation.z -= turn * 0.09;
+
+    player.skin.head.rotation.y += turn * 0.16;
+    player.skin.head.rotation.x += turn * 0.03;
+
+    player.cape.rotation.z = turn * 0.06;
+    player.cape.rotation.x += turn * 0.04;
   });
 }
 
