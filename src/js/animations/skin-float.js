@@ -2,6 +2,9 @@
 // Organic, alive-feeling idle: forward-lean float with breathing, weight shifts,
 // reactive turn response, and random micro-gestures. Nothing repeats on a short
 // cycle; everything is layered noise + spring-damped reaction.
+//
+// Limbs trail the body by one frame (~0.1ms at 60fps) so they feel heavy and
+// physical, not robotically locked to the torso.
 import { FunctionAnimation } from 'skinview3d';
 
 // ---- Smooth pseudo-noise: sum of incommensurate sines. Organic, never loops.
@@ -32,6 +35,11 @@ export function makeFloat() {
   let leanVal = 0, leanVel = 0;
   let swapVal = 0, swapVel = 0;
 
+  // One-frame limb lag: limbs apply the PREVIOUS frame's lean/swap so they
+  // trail the body by ~0.1ms (one frame at 60fps).
+  let prevLeanVal = 0;
+  let prevSwapVal = 0;
+
   // Micro-gesture state
   let gesture = null;
   let nextGestureAt = 1.5 + Math.random() * 2.5;
@@ -52,13 +60,14 @@ export function makeFloat() {
     const rawYawVel = dt > 0 ? (currentYaw - lastYaw) / dt : 0;
     lastYaw = currentYaw;
 
-    // Smooth yaw velocity before anything reacts
-    [turnVel, turnVelVel] = spring(turnVel, turnVelVel, rawYawVel, 40, 10, dt);
-    const turn = Math.max(-1, Math.min(1, turnVel * 1.2));
+    // Smooth yaw velocity before anything reacts — higher stiffness = snappier
+    // reaction to being spun on the turntable.
+    [turnVel, turnVelVel] = spring(turnVel, turnVelVel, rawYawVel, 80, 14, dt);
+    const turn = Math.max(-1, Math.min(1, turnVel * 1.6));
 
-    // Springs chase the smoothed turn
-    [leanVal, leanVel] = spring(leanVal, leanVel, turn, 55, 11, dt);
-    [swapVal, swapVel] = spring(swapVal, swapVel, turn, 22, 7, dt);
+    // Springs chase the smoothed turn — body reacts first, limbs trail.
+    [leanVal, leanVel] = spring(leanVal, leanVel, turn, 80, 14, dt);
+    [swapVal, swapVel] = spring(swapVal, swapVel, turn, 30, 10, dt);
 
     // ---- Breath: inhale (chest up) → hold → exhale → rest ------------------
     breathPhase += dt * breathRate;
@@ -132,19 +141,26 @@ export function makeFloat() {
     }
 
     // ---- Turn reaction: lean into turns, catch balance ---------------------
-    player.skin.body.rotation.z += -leanVal * 0.18;
-    player.skin.body.rotation.y += leanVal * 0.16;
+    // Body reacts immediately to the current turn value.
+    player.skin.body.rotation.z += -leanVal * 0.28;
+    player.skin.body.rotation.y += leanVal * 0.24;
 
-    player.skin.leftArm.rotation.x += swapVal * 0.14;
-    player.skin.rightArm.rotation.x -= swapVal * 0.14;
-    player.skin.leftLeg.rotation.x -= swapVal * 0.06;
-    player.skin.rightLeg.rotation.x += swapVal * 0.06;
+    // Limbs apply the PREVIOUS frame's values — one frame of lag (~0.1ms),
+    // so arms and legs trail the body instead of moving in lockstep.
+    player.skin.leftArm.rotation.x += prevSwapVal * 0.22;
+    player.skin.rightArm.rotation.x -= prevSwapVal * 0.22;
+    player.skin.leftLeg.rotation.x -= prevSwapVal * 0.14;
+    player.skin.rightLeg.rotation.x += prevSwapVal * 0.14;
 
-    player.skin.head.rotation.y += leanVal * 0.2;
-    player.skin.head.rotation.x += Math.abs(leanVal) * 0.025;
+    player.skin.head.rotation.y += prevLeanVal * 0.3;
+    player.skin.head.rotation.x += Math.abs(prevLeanVal) * 0.03;
 
-    player.cape.rotation.z += leanVal * 0.1;
-    player.cape.rotation.x += Math.abs(leanVal) * 0.06;
+    player.cape.rotation.z += prevLeanVal * 0.14;
+    player.cape.rotation.x += Math.abs(prevLeanVal) * 0.08;
+
+    // Store this frame's values for next frame's limb lag.
+    prevLeanVal = leanVal;
+    prevSwapVal = swapVal;
   });
 }
 
