@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('zenon', {
   getSettings: () => ipcRenderer.invoke('get-settings'),
   saveSettings: (s) => ipcRenderer.invoke('save-settings', s),
   getSystemInfo: () => ipcRenderer.invoke('get-system-info'),
+getAppInfo: () => ipcRenderer.invoke('app:get-version'),
 
   // Instances
   getInstances: () => ipcRenderer.invoke('get-instances'),

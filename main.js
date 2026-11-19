@@ -709,7 +709,7 @@ function writeInstanceIconFile(instanceId, buffer, extOrMime) {
 async function downloadInstanceIconFromUrl(instanceId, url) {
   const u = String(url || '').trim();
   if (!u) return null;
-  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+  const res = await fetch(u, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
   if (!res.ok) throw new Error(`Icon download failed (HTTP ${res.status})`);
   const ct = res.headers.get('content-type') || '';
   const buf = await res.buffer();
@@ -1518,7 +1518,7 @@ function compareForgeFullIdDesc(a, b) {
   return String(b).localeCompare(String(a));
 }
 
-const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.1.0 (Electron; +https://github.com/)' };
+const FORGE_FETCH_HEADERS = { 'User-Agent': 'ZenonClient/1.1.1 (Electron; +https://github.com/)' };
 
 /** e.g. 1.21.10-rc1 → 1.21.10 (Forge promos/maven use release ids). */
 function forgeMcVersionFallbacks(mcVersion) {
@@ -2148,7 +2148,7 @@ const CF_LOADER_NAMES = ['forge', 'fabric', 'quilt', 'neoforge'];
 
 async function cfFetchJson(pathAndQuery) {
   const res = await nativeFetch(`${CF_PROXY}/${pathAndQuery}`, {
-    headers: { 'User-Agent': 'ZenonClient/1.1.0', Accept: 'application/json' }
+    headers: { 'User-Agent': 'ZenonClient/1.1.1', Accept: 'application/json' }
   });
   const text = await res.text();
   let json = null;
@@ -2254,7 +2254,7 @@ async function searchModrinth({ query, version, loader, projectType = 'mod', lim
     const url = `https://api.modrinth.com/v2/search?query=${encodeURIComponent(query || '')}&facets=${encodeURIComponent(facetsStr)}&limit=${limit}&offset=${offset}`;
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.1' }
     });
     const text = await res.text();
     let data;
@@ -2299,7 +2299,7 @@ async function spigetSearchResources({ query, size = 20, page = 1, mode = 'searc
       const safeQ = encodeURIComponent(q);
       url = `https://api.spiget.org/v2/search/resources/${safeQ}?size=${lim}&page=${pg}`;
     }
-    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+    const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
     if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
@@ -2312,7 +2312,7 @@ async function spigetGetResource(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
   if (!res.ok) throw new Error(`Spiget resource HTTP ${res.status}`);
   return await res.json();
 }
@@ -2321,7 +2321,7 @@ async function spigetDownloadResourceJar(resourceId) {
   const id = String(resourceId || '').trim();
   if (!id) throw new Error('Missing resource id');
   const url = `https://api.spiget.org/v2/resources/${encodeURIComponent(id)}/download`;
-  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' }, redirect: 'follow' });
+  const res = await fetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' }, redirect: 'follow' });
   if (!res.ok) throw new Error(`Spiget download HTTP ${res.status}`);
   const buf = await res.buffer();
   if (!buf?.length) throw new Error('Empty download');
@@ -2354,7 +2354,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
     if (params.length) url += '?' + params.join('&');
 
     const res = await fetch(url, {
-      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.1' }
     });
     return await res.json();
   } catch (e) {
@@ -2363,7 +2363,7 @@ async function getProjectVersions(projectId, mcVersion, loader, loaders = null) 
 }
 
 // ----- Modrinth dependency auto-install -----
-const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.1.0' };
+const MODRINTH_UA = { 'User-Agent': 'ZenonClient/1.1.1' };
 const __mrProjectCache = new Map(); // projectId -> { at, data }
 
 async function fetchModrinthProjectCached(projectId) {
@@ -2510,7 +2510,7 @@ function safeJoinUnderInstanceRoot(instanceRoot, relPath) {
 async function fetchLatestFabricLoaderForMc(mcVersion) {
   try {
     const res = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${encodeURIComponent(mcVersion)}`, {
-      headers: { 'User-Agent': 'ZenonClient/1.1.0' }
+      headers: { 'User-Agent': 'ZenonClient/1.1.1' }
     });
     if (!res.ok) return null;
     const body = await res.json();
@@ -2530,7 +2530,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
     const file = versionData.files.find((f) => f.primary) || versionData.files[0];
     if (!file || !file.url) throw new Error('No modpack file on this version');
 
-    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+    const packRes = await fetch(file.url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
     if (!packRes.ok) throw new Error(`Download failed (HTTP ${packRes.status})`);
     const buffer = await packRes.buffer();
 
@@ -2586,7 +2586,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!rel || !Array.isArray(f.downloads) || !f.downloads[0]) continue;
       const dest = safeJoinUnderInstanceRoot(root, rel);
       fs.ensureDirSync(path.dirname(dest));
-      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
       if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
       const chunk = await fr.buffer();
       fs.writeFileSync(dest, chunk);
@@ -2698,7 +2698,7 @@ async function fetchSignedTexturesProperty(uuid) {
   const noDashes = id.replace(/-/g, '');
   try {
     const url = `https://sessionserver.mojang.com/session/minecraft/profile/${encodeURIComponent(noDashes)}?unsigned=false`;
-    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } });
+    const res = await nativeFetch(url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } });
     if (!res.ok) return null;
     const j = await res.json();
     const props = Array.isArray(j?.properties) ? j.properties : [];
@@ -3198,6 +3198,11 @@ ipcMain.handle('get-settings', () => loadSettings());
 ipcMain.handle('get-system-info', () => ({
   totalMemMb: TOTAL_RAM_MB,
   recommendedMaxMb: recommendedMaxRamMb()
+}));
+
+ipcMain.handle('app:get-version', () => ({
+  version: app.getVersion(),
+  isPackaged: app.isPackaged
 }));
 ipcMain.handle('save-settings', (_, settings) => { saveSettings(settings); return true; });
 
@@ -3749,7 +3754,7 @@ async function fetchMinecraftProfileSkins(force = false) {
   const token = settings?.auth?.minecraft?.accessToken;
   if (!token) return { success: false, error: 'Not signed in with Microsoft.' };
   const res = await fetchWithRetry(nativeFetch, 'https://api.minecraftservices.com/minecraft/profile', {
-    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'ZenonClient/1.1.0' }
+    headers: { Authorization: `Bearer ${token}`, Accept: 'application/json', 'User-Agent': 'ZenonClient/1.1.1' }
   }, 2);
   if (!res.ok) return { success: false, error: skinMojangHttpError(res.status) };
   const j = await res.json();
@@ -3778,7 +3783,7 @@ async function fetchMinecraftProfileSkins(force = false) {
 async function downloadSkinToFile(url, destPath) {
   const u = String(url || '').trim();
   if (!u) throw new Error('Missing skin URL');
-  const res = await fetchWithRetry(fetch, u, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } }, 2);
+  const res = await fetchWithRetry(fetch, u, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } }, 2);
   if (!res.ok) throw new Error(skinMojangHttpError(res.status));
   const buf = await res.buffer();
   fs.writeFileSync(destPath, buf);
@@ -3902,7 +3907,7 @@ ipcMain.handle('skin:apply', async (_, data = {}) => {
     } else if (data?.source === 'profile') {
       const url = String(data?.url || '').trim();
       if (!url) return { success: false, error: 'Missing skin URL' };
-      const res = await fetchWithRetry(fetch, url, { headers: { 'User-Agent': 'ZenonClient/1.1.0' } }, 2);
+      const res = await fetchWithRetry(fetch, url, { headers: { 'User-Agent': 'ZenonClient/1.1.1' } }, 2);
       if (!res.ok) return { success: false, error: `${skinMojangHttpError(res.status)}` };
       skinBuf = await res.buffer();
     } else {
@@ -3930,7 +3935,7 @@ ipcMain.handle('skin:apply', async (_, data = {}) => {
         Authorization: `Bearer ${token}`,
         'Content-Type': `multipart/form-data; boundary=${boundary}`,
         'Content-Length': String(body.length),
-        'User-Agent': 'ZenonClient/1.1.0'
+        'User-Agent': 'ZenonClient/1.1.1'
       },
       body
     });

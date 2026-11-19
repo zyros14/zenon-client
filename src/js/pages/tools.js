@@ -86,11 +86,11 @@ async function renderTools() {
         <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap">
           <div>
             <div style="font-weight:800;font-size:14px">Updates</div>
-            <div style="margin-top:6px;color:var(--text-muted);font-size:12px">Check for new versions of Zenon Client.</div>
+            <div style="margin-top:6px;color:var(--text-muted);font-size:12px">Check for new versions of Zenon Client. <span id="tools-current-version">Current: v?</span></div>
           </div>
           <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end">
             <button type="button" class="btn btn-ghost" id="tools-check-updates-btn">Check for updates</button>
-            <button type="button" class="btn btn-primary" id="tools-install-update-btn" disabled>Install update</button>
+            <button type="button" class="btn btn-primary" id="tools-install-update-btn" disabled>Restart to install</button>
           </div>
         </div>
         <div id="tools-update-status" style="margin-top:8px;color:var(--text-muted);font-size:12px">Idle</div>
@@ -151,6 +151,8 @@ async function renderTools() {
   const statusEl = document.getElementById('tools-update-status');
   const progEl = document.getElementById('tools-update-progress');
   const installBtn = document.getElementById('tools-install-update-btn');
+  const currentVersionEl = document.getElementById('tools-current-version');
+  const checkBtn = document.getElementById('tools-check-updates-btn');
 
   const setUpdateStatus = (text) => {
     if (statusEl) statusEl.textContent = text || 'Idle';
@@ -169,27 +171,66 @@ async function renderTools() {
       </div>
     `;
   };
+  const hideProgress = () => { if (progEl) progEl.style.display = 'none'; };
 
-  setUpdateStatus('Idle');
+  // Show the running version (from the packaged app when available, else the vendored copy)
+  (async () => {
+    try {
+      const info = await window.zenon.getAppInfo?.();
+      if (info?.version) {
+        State.appVersion = info.version;
+        State.appIsPackaged = !!info.isPackaged;
+        if (currentVersionEl) currentVersionEl.textContent = `Current: v${info.version}`;
+      }
+    } catch (e) {}
+  })();
 
-  document.getElementById('tools-check-updates-btn')?.addEventListener('click', async () => {
-    const res = await window.zenon.updateCheck?.();
-    if (res?.success) {
-      window.zenonActivity?.add?.('Checked for updates', 'info');
-      showToast('Checking for updates…', 'info', 1600);
-    } else {
-      window.zenonActivity?.add?.('Update check failed', 'error');
-      showToast(res?.error || 'Update check failed', 'error', 4500);
+  const describeResult = (res) => {
+    const current = State.appVersion || '';
+    return current ? `You're up to date (v${current}).` : 'Check complete.';
+  };
+
+  const runCheck = async () => {
+    setUpdateStatus('Checking for updates…');
+    hideProgress();
+    if (checkBtn) checkBtn.disabled = true;
+    try {
+      const res = await window.zenon.updateCheck?.();
+      if (checkBtn) checkBtn.disabled = false;
+      if (res?.success) {
+        window.zenonActivity?.add?.('Checked for updates', 'info');
+        const info = res?.result?.versionInfo;
+        const latest = info?.version || info?.tag || '';
+        if (res?.result?.isUpdateAvailable) {
+          setUpdateStatus(`Update v${latest} found — downloading…`);
+          showToast(`Update v${latest} found — downloading…`, 'info', 2500);
+        } else {
+          setUpdateStatus(describeResult(res));
+        }
+      } else {
+        window.zenonActivity?.add?.('Update check failed', 'error');
+        setUpdateStatus(`Update check failed: ${res?.error || 'unknown error'}`);
+        showToast(res?.error || 'Update check failed', 'error', 4500);
+      }
+    } catch (e) {
+      if (checkBtn) checkBtn.disabled = false;
+      const msg = e?.message || 'unknown error';
+      setUpdateStatus(`Update check failed: ${msg}`);
+      showToast(`Update check failed: ${msg}`, 'error', 4500);
     }
-  });
+  };
+
+  checkBtn?.addEventListener('click', runCheck);
 
   installBtn?.addEventListener('click', async () => {
     const res = await window.zenon.updateInstall?.();
     if (!res?.success) {
       window.zenonActivity?.add?.('Update install failed', 'error');
+      setUpdateStatus(`Restart failed: ${res?.error || 'unknown error'}`);
       showToast(res?.error || 'Could not install update', 'error', 5000);
     } else {
       window.zenonActivity?.add?.('Restarting to install update', 'info');
+      setUpdateStatus('Restarting to install update…');
     }
   });
 

@@ -2,6 +2,19 @@
 
 All notable changes to **Zenon Client** are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/) and uses [Semantic Versioning](https://semver.org/).
 
+## [1.1.1] - 2026-11-18
+
+### Fixed
+- **"Check for updates" no longer silently does nothing.** The button called the IPC correctly, but the renderer never surfaced the result — clicking it showed a brief toast then sat on "Idle" forever, with the Install button permanently disabled and no indication of whether an update was available, applied, or errored. The Tools page now reports the running version and the concrete outcome of every check ("You're up to date (vX).", "Update vY found — downloading…", or the actual error).
+- **Current version is now visible** in Tools → Updates (and programmatically available via a new IPC), so you can confirm which build you're on at a glance.
+- **Unpackaged builds give a clear message** — running `npm start` now answers "Updates only work in packaged builds." instead of failing silently.
+
+### Notes
+- Windows installer is not code-signed — SmartScreen will flag it on first run ("More info → Run anyway").
+- Auto-update from 1.1.0 works: this release ships `latest.yml` and the blockmap.
+
+---
+
 ## [1.1.0] - 2026-11-18
 
 ### Highlights
