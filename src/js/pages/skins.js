@@ -622,7 +622,7 @@ async function renderSkins() {
 function setViewerAnimation(kind) {
   const viewer = state.viewer;
   if (!viewer) return;
-  const make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.idle;
+  const make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.float;
   viewer.animation = make();
 }
 
