@@ -187,7 +187,7 @@ async function renderSettings() {
           <img class="about-logo-img" src="assets/zenon-logo.png" alt="" draggable="false" />
           <div>
             <div style="font-family:var(--font-display);font-size:20px;font-weight:700;letter-spacing:1px">ZENON CLIENT</div>
-            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.1.3 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Version 1.1.4 &nbsp;·&nbsp; Built with Electron &nbsp;·&nbsp; minecraft-launcher-core</div>
           </div>
         </div>
       </div>
