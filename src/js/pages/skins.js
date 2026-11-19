@@ -503,7 +503,7 @@ async function ensureViewer() {
     viewer.controls.enablePan = false;
     viewer.controls.minPolarAngle = Math.PI / 4.5;
     viewer.controls.maxPolarAngle = Math.PI / 1.8;
-    viewer.animation = ANIMATION_CHOICES.idle();
+    viewer.animation = ANIMATION_CHOICES.float();
     // Studio floor under the model (top face at foot level)
     try {
       if (!state.floor) state.floor = buildFloor();
