@@ -44,6 +44,7 @@ All notable changes to **Zenon Client** are documented here. The format follows 
 - **CurseForge search silently forced "Modpacks" back to "Mods".** A leftover guard in `runDiscoverySearch()` reset the selected type to `mod` whenever the source was CurseForge, so CF modpack searches returned mods. Removed; the CF modpack classId (4471) is now actually exercised.
 - **Launch wrapper hook works.** The `Wrapper` instance setting was never applied (it logged nothing and launched plain). On Windows it now generates a shim batch that answers MCLC's `-version` probe truthfully and otherwise execs `<wrapper> "<java>" <game args>` — e.g. `mangohud java -Xmx2G …`. Ignored with a clear message on non-Windows.
 - **Update reminder toggle is real.** Settings → Updates previously showed a hard-wired "on" switch with `data-hard-on="true"`; the banner/install reminder is now gated on the persisted `updateReminder` setting (default on), across restart, manual check, and auto-download paths.
+- **Auto-updater `latest.yml` format fixed.** The `latest.yml` metadata file on GitHub Releases now matches the 1.1.3 format: base64-encoded SHA512 checksums with top-level `path`/`sha512`/`releaseDate` fields and relative file URLs. Previous 1.1.4 builds used hex-encoded checksums which caused a "sha512 checksum mismatch" error on update check.
 
 ### Notes
 - Windows installer is not code-signed yet — SmartScreen will flag it on first run ("More info → Run anyway").
