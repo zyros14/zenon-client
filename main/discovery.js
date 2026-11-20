@@ -417,11 +417,12 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       fs.writeFileSync(dest, chunk);
 
       // Persist content metadata for mods so the launcher knows title, author, source, etc.
-      if (f.projectId && rel.startsWith('mods/')) {
+      // Modrinth index files may not include projectId; fall back to filename-based title.
+      if (rel.startsWith('mods/')) {
         try {
           const proj = await fetchModrinthProjectCached(f.projectId);
           modMeta[rel] = {
-            projectId: f.projectId,
+            projectId: f.projectId || null,
             title: proj?.title || f.path.split('/').pop(),
             iconUrl: proj?.icon_url || null,
             author: null,
@@ -431,7 +432,7 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
           };
         } catch (e) {
           modMeta[rel] = {
-            projectId: f.projectId,
+            projectId: f.projectId || null,
             title: f.path.split('/').pop(),
             iconUrl: null,
             author: null,
