@@ -1,5 +1,9 @@
 // ===== Skins (ES module — loads vendored skinview3d + three.js) =====
-import { SkinViewer } from 'skinview3d';
+import {
+  SkinViewer,
+  FunctionAnimation,
+  WaveAnimation
+} from 'skinview3d';
 import { loadImage, loadSkinToCanvas, inferModelType } from 'skinview-utils';
 import {
   CanvasTexture,
@@ -8,27 +12,96 @@ import {
   MeshBasicMaterial,
   PlaneGeometry
 } from 'three';
-import { makeFloat } from '../animations/skin-float.js';
 
-// Animation imported from '../animations/skin-float'.
+// Hand-tuned animations: static-ish poses with subtle breathing so they feel alive,
+// not like a skeleton on a treadmill.
+function makeIdle() {
+  return new FunctionAnimation((player, progress) => {
+    const t = progress * 1.6;
+    const sway = Math.sin(t * 0.5);
+    const breathe = Math.sin(t);
+    player.skin.body.rotation.y = sway * 0.03;
+    player.skin.body.rotation.x = breathe * 0.015;
+    player.skin.body.position.y = -6 + breathe * 0.12; // base torso offset is -6, keep it
+    // Shoulder breathing + arms drift slightly with the torso
+    player.skin.leftArm.rotation.z  =  Math.PI * 0.022 + breathe * 0.035;
+    player.skin.rightArm.rotation.z = -Math.PI * 0.022 - breathe * 0.035;
+    player.skin.leftArm.rotation.x  =  Math.sin(t * 0.7 + 0.8) * 0.03;
+    player.skin.rightArm.rotation.x = Math.sin(t * 0.7) * -0.03;
+    player.skin.leftArm.rotation.y  =  Math.sin(t * 0.42 + 1.4) * 0.02;
+    player.skin.rightArm.rotation.y = -Math.sin(t * 0.42 + 1.4) * 0.02;
+    // Head slowly looks around + tiny nod
+    player.skin.head.rotation.y = Math.sin(t * 0.35 + 0.6) * 0.07;
+    player.skin.head.rotation.x = Math.sin(t * 0.55 + 1.4) * 0.032;
+    // Cape breathes with the chest
+    player.cape.rotation.x = Math.sin(t * 0.8) * 0.03 + Math.PI * 0.06;
+  });
+}
 
-// Simple fallback animation in case the dynamic float fails to construct.
-function makeFallbackFloat() {
-  return {
-    update(player, progress) {
-      const t = progress * 1.6;
-      player.skin.body.rotation.y = Math.sin(t * 0.5) * 0.03;
-      player.skin.body.rotation.x = Math.sin(t) * 0.015;
-      player.position.y = Math.sin(t) * 0.12;
-      player.skin.head.rotation.y = Math.sin(t * 0.35 + 0.6) * 0.07;
-      player.skin.head.rotation.x = Math.sin(t * 0.55 + 1.4) * 0.032;
-      player.cape.rotation.x = Math.sin(t * 0.8) * 0.03 + Math.PI * 0.06;
-    }
-  };
+function makeWalk() {
+  return new FunctionAnimation((player, progress) => {
+    const t = progress * 7;           // cadence
+    const legSwing = Math.sin(t) * 0.55;
+    const armSwing = Math.cos(t) * 0.5;
+    // Legs + arms in opposition
+    player.skin.leftLeg.rotation.x  = legSwing;
+    player.skin.rightLeg.rotation.x = -legSwing;
+    player.skin.leftArm.rotation.x  = -armSwing;
+    player.skin.rightArm.rotation.x = armSwing;
+    player.skin.leftArm.rotation.z  =  Math.PI * 0.02 + Math.cos(t) * 0.03;
+    player.skin.rightArm.rotation.z = -Math.PI * 0.02 - Math.cos(t + Math.PI) * 0.03;
+    // Hip/torso sway — counter-lean like a human walking
+    player.skin.body.rotation.y = Math.sin(t * 0.5) * 0.05;
+    player.skin.body.rotation.z = Math.cos(t * 0.5) * 0.02;
+    // Light bounce, not pogo-stick
+    player.position.y = Math.abs(Math.sin(t)) * 0.12;
+    // Head settles with the body — tiny look-around feel
+    player.skin.head.rotation.y = Math.sin(t * 0.25 + 0.3) * 0.05;
+    player.skin.head.rotation.x = Math.sin(t * 0.4) * 0.02;
+    // Cape follows the chest, softer swing
+    player.cape.rotation.x = Math.sin(t * 0.667) * 0.08 + Math.PI * 0.06;
+  });
+}
+
+function makeRun() {
+  const walk = makeWalk();
+  walk.speed = 1.7;          // sprint = faster walk, like Minecraft
+  walk.headBobbing = false;  // keep the head level when sprinting
+  return walk;
+}
+
+function makeCrouchHold() {
+  return new FunctionAnimation((player, progress) => {
+    // Static full-crouch pose with a slow breathing wobble on top.
+    const t = progress * 2.1;
+    const breathe = Math.sin(t) * 0.05;
+    player.skin.body.rotation.x = 0.454 + breathe * 0.15;
+    player.skin.body.position.z = 1.3256 - 3.4500;
+    player.skin.body.position.y = -8.104 - Math.sin(t) * 0.06;
+    player.cape.position.y = 6.149 - Math.sin(t) * 0.05;
+    player.cape.rotation.x = 0.4827;
+    player.cape.position.z = -1.6634;
+    player.skin.head.position.y = -3.618 - Math.sin(t) * 0.04;
+    player.skin.head.rotation.x = 0.08;
+    player.skin.leftArm.position.z = 0.168;
+    player.skin.rightArm.position.z = 0.168;
+    player.skin.leftArm.rotation.x = 0.410 - breathe;
+    player.skin.rightArm.rotation.x = 0.410 - breathe;
+    player.skin.leftArm.rotation.z = 0.1;
+    player.skin.rightArm.rotation.z = -0.1;
+    player.skin.leftArm.position.y = -4.539;
+    player.skin.rightArm.position.y = -4.539;
+    player.skin.rightLeg.position.z = -3.450;
+    player.skin.leftLeg.position.z = -3.450;
+  });
 }
 
 const ANIMATION_CHOICES = {
-  float: () => makeFloat()
+  idle: () => makeIdle(),
+  walk: () => makeWalk(),
+  run: () => makeRun(),
+  wave: () => new WaveAnimation(),
+  crouch: () => makeCrouchHold()
 };
 
 const state = {
@@ -470,12 +543,7 @@ async function ensureViewer() {
     viewer.controls.enablePan = false;
     viewer.controls.minPolarAngle = Math.PI / 4.5;
     viewer.controls.maxPolarAngle = Math.PI / 1.8;
-    try {
-      viewer.animation = ANIMATION_CHOICES.float();
-    } catch (animErr) {
-      console.error('[skins] float animation failed, using fallback:', animErr);
-      viewer.animation = makeFallbackFloat();
-    }
+    viewer.animation = ANIMATION_CHOICES.idle();
     // Studio floor under the model (top face at foot level)
     try {
       if (!state.floor) state.floor = buildFloor();
@@ -563,7 +631,11 @@ async function renderSkins() {
           </div>
           <div class="skin-viewer-controls">
             <select id="skin-animation-select" class="form-select" aria-label="Animation">
-              <option value="float">Float</option>
+              <option value="idle">Idle</option>
+              <option value="walk">Walking</option>
+              <option value="run">Running</option>
+              <option value="wave">Wave</option>
+              <option value="crouch">Crouch</option>
             </select>
             <div class="skin-arms-toggle" id="skin-arms-toggle" role="radiogroup" aria-label="Arm model">
               <span class="skin-arms-label">Arms</span>
@@ -642,14 +714,8 @@ async function renderSkins() {
 function setViewerAnimation(kind) {
   const viewer = state.viewer;
   if (!viewer) return;
-  let make;
-  try {
-    make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.float;
-    viewer.animation = make();
-  } catch (e) {
-    console.error('[skins] animation switch failed:', e);
-    viewer.animation = makeFallbackFloat();
-  }
+  const make = ANIMATION_CHOICES[kind] || ANIMATION_CHOICES.idle;
+  viewer.animation = make();
 }
 
 function syncArmsToggle() {
