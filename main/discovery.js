@@ -403,6 +403,8 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
 
     const files = Array.isArray(index.files) ? index.files : [];
     const modMeta = {}; // filename -> { projectId, title, iconUrl, author, at, versionId, versionNumber }
+    const failedFiles = []; // Track files that failed to download
+    const downloadedMods = new Set(); // Track which mods were actually downloaded
 
     for (const f of files) {
       const env = f.env || {};
@@ -411,40 +413,47 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!rel || !Array.isArray(f.downloads) || !f.downloads[0]) continue;
       const dest = safeJoinUnderInstanceRoot(root, rel);
       fs.ensureDirSync(path.dirname(dest));
-      const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.1.4' } });
-      if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
-      const chunk = await fr.buffer();
-      fs.writeFileSync(dest, chunk);
+      try {
+        const fr = await fetch(f.downloads[0], { headers: { 'User-Agent': 'ZenonClient/1.1.4' }, redirect: 'follow' });
+        if (!fr.ok) throw new Error(`HTTP ${fr.status}`);
+        const chunk = await fr.buffer();
+        if (chunk.length === 0) throw new Error('Empty file');
+        fs.writeFileSync(dest, chunk);
 
-      // Persist content metadata for mods so the launcher knows title, author, source, etc.
-      // Modrinth index files may not include projectId; fall back to filename-based title.
-      if (rel.startsWith('mods/')) {
-        try {
-          const proj = await fetchModrinthProjectCached(f.projectId);
-          modMeta[rel] = {
-            projectId: f.projectId || null,
-            title: proj?.title || f.path.split('/').pop(),
-            iconUrl: proj?.icon_url || null,
-            author: null,
-            at: Date.now(),
-            versionId: f.fileID || null,
-            versionNumber: null
-          };
-        } catch (e) {
-          modMeta[rel] = {
-            projectId: f.projectId || null,
-            title: f.path.split('/').pop(),
-            iconUrl: null,
-            author: null,
-            at: Date.now(),
-            versionId: f.fileID || null,
-            versionNumber: null
-          };
+        if (rel.startsWith('mods/')) {
+          downloadedMods.add(rel);
+          // Persist content metadata for mods so the launcher knows title, author, source, etc.
+          // Modrinth index files may not include projectId; fall back to filename-based title.
+          try {
+            const proj = await fetchModrinthProjectCached(f.projectId);
+            modMeta[rel] = {
+              projectId: f.projectId || null,
+              title: proj?.title || f.path.split('/').pop(),
+              iconUrl: proj?.icon_url || null,
+              author: null,
+              at: Date.now(),
+              versionId: f.fileID || null,
+              versionNumber: null
+            };
+          } catch (e) {
+            modMeta[rel] = {
+              projectId: f.projectId || null,
+              title: f.path.split('/').pop(),
+              iconUrl: null,
+              author: null,
+              at: Date.now(),
+              versionId: f.fileID || null,
+              versionNumber: null
+            };
+          }
         }
+      } catch (e) {
+        failedFiles.push({ path: rel, error: e.message });
       }
     }
 
     // Write content meta so mods from the pack are recognized by the launcher.
+    const downloadedCount = downloadedMods.size;
     try {
       const existingMeta = readContentMeta(inst.id, 'mod') || {};
       writeContentMeta(inst.id, 'mod', { ...existingMeta, ...modMeta });
@@ -468,7 +477,8 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       }
     }
 
-    return inst;
+    // Return in the same format as installCurseforgeModpack for the UI to handle navigation.
+    return { success: true, instance: inst, installed: downloadedCount, failed: failedFiles, total: downloadedCount + failedFiles.length };
   } catch (e) {
     if (inst && inst.id) {
       try {
