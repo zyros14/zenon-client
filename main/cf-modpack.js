@@ -16,6 +16,7 @@ const {
   updateInstance,
   downloadInstanceIconFromUrl
 } = require('./instances');
+const { readContentMeta, writeContentMeta } = require('./content');
 const { safeJoinUnderInstanceRoot } = require('./lib/versions');
 
 const CF_PROXY = 'https://curseforge-proxy.vercel.app/api/cf';
@@ -52,6 +53,28 @@ async function cfFileDetail(projectID, fileID) {
     return { ok: true, fileName: String(d.fileName), url };
   } catch (e) {
     return { ok: false, reason: 'metadata-unavailable' };
+  }
+}
+
+/**
+ * Fetch CurseForge project metadata for a project ID.
+ * Returns { title, iconUrl, author } or empty object on failure.
+ */
+async function cfProjectInfo(projectID) {
+  try {
+    const res = await nativeFetch(`${CF_PROXY}/v1/mods/${encodeURIComponent(projectID)}`, { headers: CF_UA });
+    if (!res.ok) return {};
+    const json = await res.json();
+    const d = json?.data || json || {};
+    const logo = d?.logo?.thumbnailUrl || null;
+    const author = (Array.isArray(d?.authors) && d.authors[0] && d.authors[0].name) || null;
+    return {
+      title: d.name || null,
+      iconUrl: logo,
+      author: author
+    };
+  } catch (e) {
+    return {};
   }
 }
 
@@ -109,6 +132,7 @@ async function installCurseforgeModpack(versionData, displayName, iconUrl = null
     const total = required.length;
     let installed = 0;
     const failed = [];
+    const modMeta = {}; // filename -> { projectId, title, iconUrl, author, at }
     const CONCURRENCY = 4;
     const runNext = async () => {
       while (installed + failed.length < total) {
@@ -125,6 +149,26 @@ async function installCurseforgeModpack(versionData, displayName, iconUrl = null
           const buf = await fileRes.buffer();
           fs.writeFileSync(path.join(modsDir, detail.fileName), buf);
           installed++;
+
+          // Persist content metadata for mods from CurseForge.
+          try {
+            const proj = await cfProjectInfo(entry.projectID);
+            modMeta[detail.fileName] = {
+              projectId: entry.projectID,
+              title: proj?.title || detail.fileName,
+              iconUrl: proj?.iconUrl || null,
+              author: proj?.author || null,
+              at: Date.now()
+            };
+          } catch (e) {
+            modMeta[detail.fileName] = {
+              projectId: entry.projectID,
+              title: detail.fileName,
+              iconUrl: null,
+              author: null,
+              at: Date.now()
+            };
+          }
         } catch (e) {
           failed.push({ projectID: entry.projectID, fileID: entry.fileID, error: e?.message || String(e) });
         }
@@ -133,6 +177,12 @@ async function installCurseforgeModpack(versionData, displayName, iconUrl = null
     const workers = [];
     for (let i = 0; i < Math.min(CONCURRENCY, total); i++) workers.push(runNext());
     await Promise.all(workers);
+
+    // Write content meta so mods from the pack are recognized by the launcher.
+    try {
+      const existingMeta = readContentMeta(inst.id, 'mod') || {};
+      writeContentMeta(inst.id, 'mod', { ...existingMeta, ...modMeta });
+    } catch (e) { /* non-fatal */ }
 
     const overridesPrefix = String(manifest?.overrides || 'overrides').replace(/^\/+|\/+$/g, '') + '/';
     for (const e of zip.getEntries()) {

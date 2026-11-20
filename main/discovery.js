@@ -402,6 +402,8 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
     }
 
     const files = Array.isArray(index.files) ? index.files : [];
+    const modMeta = {}; // filename -> { projectId, title, iconUrl, author, at, versionId, versionNumber }
+
     for (const f of files) {
       const env = f.env || {};
       if (env.client === 'unsupported') continue;
@@ -413,7 +415,39 @@ async function createInstanceFromMrpack(versionData, displayName, iconUrl = null
       if (!fr.ok) throw new Error(`Pack file failed (${fr.status}): ${rel}`);
       const chunk = await fr.buffer();
       fs.writeFileSync(dest, chunk);
+
+      // Persist content metadata for mods so the launcher knows title, author, source, etc.
+      if (f.projectId && rel.startsWith('mods/')) {
+        try {
+          const proj = await fetchModrinthProjectCached(f.projectId);
+          modMeta[rel] = {
+            projectId: f.projectId,
+            title: proj?.title || f.path.split('/').pop(),
+            iconUrl: proj?.icon_url || null,
+            author: null,
+            at: Date.now(),
+            versionId: f.fileID || null,
+            versionNumber: null
+          };
+        } catch (e) {
+          modMeta[rel] = {
+            projectId: f.projectId,
+            title: f.path.split('/').pop(),
+            iconUrl: null,
+            author: null,
+            at: Date.now(),
+            versionId: f.fileID || null,
+            versionNumber: null
+          };
+        }
+      }
     }
+
+    // Write content meta so mods from the pack are recognized by the launcher.
+    try {
+      const existingMeta = readContentMeta(inst.id, 'mod') || {};
+      writeContentMeta(inst.id, 'mod', { ...existingMeta, ...modMeta });
+    } catch (e) { /* non-fatal */ }
 
     for (const e of zip.getEntries()) {
       const name = e.entryName.replace(/\\/g, '/');
