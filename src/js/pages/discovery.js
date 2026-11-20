@@ -323,7 +323,7 @@ async function runDiscoverySearch(offset) {
         ? `<img class="discovery-card-icon" src="${escapeHtml(mod.icon_url)}" alt="" onerror="this.outerHTML='<div class=\\'discovery-card-icon-ph\\'>${escapeHtml(initial)}</div>'">`
         : `<div class="discovery-card-icon-ph">${escapeHtml(initial)}</div>`;
       return `
-    <article class="discovery-card glow-card">
+    <article class="discovery-card glow-card" data-type="${currentDiscoveryType()?.id || ''}">
       <div class="discovery-card-top">
         ${iconBlock}
         <div class="discovery-card-text">
@@ -335,15 +335,53 @@ async function runDiscoverySearch(offset) {
       <div class="discovery-card-meta">
         <span>${formatDownloads(mod.downloads)} dl</span>
       </div>
-      <button type="button" class="btn btn-primary btn-sm discovery-install" data-id="${mod.project_id}" data-title="${escapeHtml(mod.title)}" data-icon="${escapeHtml(mod.icon_url || '')}" data-author="${escapeHtml(mod.author || '')}">
-        Install
-      </button>
+      <div class="discovery-card-actions">
+        ${currentDiscoveryType()?.id === 'modpack'
+          ? `<button type="button" class="btn btn-primary btn-sm discovery-create-instance" data-id="${mod.project_id}" data-title="${escapeHtml(mod.title)}" data-icon="${escapeHtml(mod.icon_url || '')}">
+               Create Instance
+             </button>
+             <button type="button" class="btn btn-outline btn-sm discovery-install" data-id="${mod.project_id}" data-title="${escapeHtml(mod.title)}" data-icon="${escapeHtml(mod.icon_url || '')}" data-author="${escapeHtml(mod.author || '')}">
+               Install
+             </button>`
+          : `<button type="button" class="btn btn-primary btn-sm discovery-install" data-id="${mod.project_id}" data-title="${escapeHtml(mod.title)}" data-icon="${escapeHtml(mod.icon_url || '')}" data-author="${escapeHtml(mod.author || '')}">
+               Install
+             </button>`
+        }
+      </div>
     </article>`;
     })
     .join('')}</div>`;
 
   renderDiscoveryPager(total, discoveryOffset, DISCOVERY_PAGE_SIZE);
 
+  // Handle Create Instance button for modpacks
+  resultsEl.querySelectorAll('.discovery-create-instance').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const typeDef = currentDiscoveryType();
+      const projectId = btn.dataset.id;
+      const title = btn.dataset.title;
+      const iconUrl = btn.dataset.icon || '';
+
+      // Fetch versions to determine MC version and loader from the modpack
+      const mcVersionOverride = getDiscoveryFilterVersion() || null;
+      const versions = await window.zenon.getProjectVersions({ projectId, mcVersion: mcVersionOverride });
+      const versionData = Array.isArray(versions) && versions.length > 0 ? versions[0] : null;
+
+      if (!versionData) {
+        showToast('Could not determine modpack requirements', 'error');
+        return;
+      }
+
+      // Show the install modal where user can choose MC version and loader
+      zenonOpenInstallModal(projectId, title, 'modpack', {}, {
+        modpackAsNewInstance: true,
+        mcVersionOverride: mcVersionOverride,
+        iconUrl: iconUrl || ''
+      });
+    });
+  });
+
+  // Handle Install button
   resultsEl.querySelectorAll('.discovery-install').forEach((btn) => {
     btn.addEventListener('click', async () => {
       const typeDef = currentDiscoveryType();
