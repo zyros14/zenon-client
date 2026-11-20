@@ -20,7 +20,12 @@ const DISCOVERY_TYPES = [
       loader: inst && inst.loader && inst.loader !== 'vanilla' ? inst.loader : null
     })
   },
-  { id: 'modpack', label: 'Modpacks', projectType: 'modpack', kind: 'modpack', versionOpts: () => ({ loaders: ['mrpack'] }) },
+  { id: 'modpack', label: 'Modpacks', projectType: 'modpack', kind: 'modpack', versionOpts: (inst) => ({
+      // Modrinth uses mrpack format, CurseForge uses zip format. Pass appropriate loaders.
+      mcVersion: inst && inst.version ? inst.version : null,
+      // Don't restrict loaders - let the backend determine compatibility
+    })
+  },
   { id: 'shader', label: 'Shaders', projectType: 'shader', kind: 'shaderpack', versionOpts: () => ({ loader: null }) },
   { id: 'resourcepack', label: 'Resource Packs', projectType: 'resourcepack', kind: 'resourcepack', versionOpts: () => ({ loaders: ['minecraft'] }) },
   { id: 'datapack', label: 'Data Packs', projectType: 'datapack', kind: 'datapack', versionOpts: () => ({ loaders: ['minecraft'] }) }
@@ -345,10 +350,14 @@ async function runDiscoverySearch(offset) {
   renderDiscoveryPager(total, discoveryOffset, DISCOVERY_PAGE_SIZE);
 
   resultsEl.querySelectorAll('.discovery-install').forEach((btn) => {
-    btn.addEventListener('click', () => {
+    btn.addEventListener('click', async () => {
       const typeDef = currentDiscoveryType();
+      const selInst = State.instances.find((x) => x && x.loader !== 'vanilla') || State.selectedInstance;
       if (typeDef.id === 'modpack') {
-        zenonOpenInstallModal(btn.dataset.id, btn.dataset.title, 'modpack', { loaders: ['mrpack'] }, {
+        // Modpacks create a new instance automatically with the correct MC version/loader from the pack
+        zenonOpenInstallModal(btn.dataset.id, btn.dataset.title, 'modpack', {
+          mcVersion: getDiscoveryFilterVersion() || null
+        }, {
           modpackAsNewInstance: true,
           mcVersionOverride: getDiscoveryFilterVersion(),
           iconUrl: btn.dataset.icon || ''
