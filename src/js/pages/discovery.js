@@ -349,14 +349,58 @@ async function runDiscoverySearch(offset) {
       const typeDef = currentDiscoveryType();
       const selInst = State.instances.find((x) => x && x.loader !== 'vanilla') || State.selectedInstance;
       if (typeDef.id === 'modpack') {
-        // Modpacks create a new instance automatically with the correct MC version/loader from the pack
-        zenonOpenInstallModal(btn.dataset.id, btn.dataset.title, 'modpack', {
-          mcVersion: getDiscoveryFilterVersion() || null
-        }, {
-          modpackAsNewInstance: true,
-          mcVersionOverride: getDiscoveryFilterVersion(),
-          iconUrl: btn.dataset.icon || ''
-        });
+        // Modpacks auto-install directly without showing version list
+        const projectId = btn.dataset.id;
+        const title = btn.dataset.title;
+        const iconUrl = btn.dataset.icon || '';
+        const mcVersionOverride = getDiscoveryFilterVersion() || null;
+
+        const taskId = window.ZenonTasks
+          ? window.ZenonTasks.start(`Installing ${title}`, {
+              detail: 'Fetching modpack versions...'
+            })
+          : null;
+
+        // Fetch versions to find the latest
+        const versions = await window.zenon.getProjectVersions({ projectId, mcVersion: mcVersionOverride });
+        const versionData = Array.isArray(versions) && versions.length > 0 ? versions[0] : null;
+
+        if (!versionData) {
+          if (taskId) window.ZenonTasks.fail(taskId, 'No compatible versions found');
+          showToast('No compatible versions found', 'error');
+          return;
+        }
+
+        // Install directly based on the project type
+        let result;
+        if (versionData?._cf && window.zenon.installCfModpack) {
+          // CurseForge modpack
+          result = await window.zenon.installCfModpack({ versionData, displayName: title, iconUrl: iconUrl || '' });
+        } else {
+          // Modrinth modpack (.mrpack)
+          result = await window.zenon.createInstanceFromMrpack({ versionData, displayName: title, iconUrl: iconUrl || '' });
+        }
+
+        if (result?.success) {
+          if (taskId) window.ZenonTasks.succeed(taskId, 'New instance ready');
+          const partialFailNote = Array.isArray(result.failed) && result.failed.length
+            ? ` — ${result.failed.length} file(s) skipped`
+            : '';
+          showToast(`${title} installed${partialFailNote}`, result.failed?.length ? 'warning' : 'success', 6000);
+
+          // Navigate to the new instance
+          if (result.instance) {
+            State.instances = await window.zenon.getInstances();
+            State.selectedInstance = result.instance;
+            if (typeof window.syncSelectedInstanceWithList === 'function') window.syncSelectedInstanceWithList();
+            if (typeof updateSidebarBadge === 'function') updateSidebarBadge();
+          }
+          State.libraryPane = 'content';
+          await navigateTo('instance', { force: true });
+        } else {
+          if (taskId) window.ZenonTasks.fail(taskId, result?.error || 'Install failed');
+          showToast(`Install failed: ${result?.error || 'Unknown error'}`, 'error');
+        }
         return;
       }
       openDiscoveryInstallTargetModal(btn.dataset.id, btn.dataset.title, btn.dataset.icon || '', btn.dataset.author || '');
