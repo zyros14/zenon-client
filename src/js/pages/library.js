@@ -1268,13 +1268,28 @@ async function zenonOpenInstallModal(projectId, title, contentKind, versionQuery
   document.getElementById('mod-versions-list').innerHTML = '<div class="loading-spinner"></div>';
   openModal('modal-mod-download');
 
+  // For CurseForge projects (cf- prefix), use the CF-specific version fetch
+  // For Modrinth modpacks, we need to allow mrpack loader. For CF modpacks, we need no loader filter.
+  const isCurseForge = String(projectId || '').startsWith('cf-');
   const mcVersion =
     mcVersionOverride != null && String(mcVersionOverride).trim() !== ''
       ? String(mcVersionOverride).trim()
       : inst?.version || '';
-  const opts = { projectId, mcVersion };
-  if (versionQuery?.loaders?.length) opts.loaders = versionQuery.loaders;
-  else if (versionQuery?.loader) opts.loader = versionQuery.loader;
+
+  let opts = { projectId, mcVersion };
+  if (modpackAsNewInstance) {
+    // For modpacks from Discovery, we need special handling:
+    // - Modrinth modpacks: pass loaders: ['mrpack'] 
+    // - CurseForge modpacks: pass loaders: null (let CF determine compatibility)
+    if (!isCurseForge) {
+      opts.loaders = ['mrpack'];
+    }
+    // For CurseForge, don't pass loaders - CF API handles modpack filtering differently
+  } else if (versionQuery?.loaders?.length) {
+    opts.loaders = versionQuery.loaders;
+  } else if (versionQuery?.loader) {
+    opts.loader = versionQuery.loader;
+  }
   const versions = await window.zenon.getProjectVersions(opts);
 
   const container = document.getElementById('mod-versions-list');

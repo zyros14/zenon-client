@@ -20,12 +20,7 @@ const DISCOVERY_TYPES = [
       loader: inst && inst.loader && inst.loader !== 'vanilla' ? inst.loader : null
     })
   },
-  { id: 'modpack', label: 'Modpacks', projectType: 'modpack', kind: 'modpack', versionOpts: (inst) => ({
-      // Modrinth uses mrpack format, CurseForge uses zip format. Pass appropriate loaders.
-      mcVersion: inst && inst.version ? inst.version : null,
-      // Don't restrict loaders - let the backend determine compatibility
-    })
-  },
+  { id: 'modpack', label: 'Modpacks', projectType: 'modpack', kind: 'modpack', versionOpts: () => ({}) },
   { id: 'shader', label: 'Shaders', projectType: 'shader', kind: 'shaderpack', versionOpts: () => ({ loader: null }) },
   { id: 'resourcepack', label: 'Resource Packs', projectType: 'resourcepack', kind: 'resourcepack', versionOpts: () => ({ loaders: ['minecraft'] }) },
   { id: 'datapack', label: 'Data Packs', projectType: 'datapack', kind: 'datapack', versionOpts: () => ({ loaders: ['minecraft'] }) }
